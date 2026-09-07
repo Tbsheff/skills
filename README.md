@@ -11,6 +11,7 @@ Agent skills created and maintained by Tyler Sheffield.
 - `the-hemingway-rule` — Keep plans, audits, and explanations concise.
 - `thermo-nuclear-code-quality-review` — Run a strict maintainability review.
 - `typed-call-stack-planning` — Plan multi-file work with typed call stacks.
+- `writing-architecture-plans` — Write implementation-ready architecture plans and ADRs.
 
 ## Install
 
