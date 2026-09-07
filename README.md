@@ -14,16 +14,30 @@ Agent skills created and maintained by Tyler Sheffield.
 
 ## Install
 
-Copy one skill into your agent skill folder:
+The repository is private, so sign in with the GitHub CLI first:
 
 ```sh
-cp -R skills/typed-call-stack-planning ~/.agents/skills/
+gh auth login
 ```
 
-Or link it while you work on the skill:
+List the available skills without installing them:
 
 ```sh
-ln -s "$PWD/skills/typed-call-stack-planning" ~/.agents/skills/typed-call-stack-planning
+npx skills add Tbsheff/skills --list
 ```
+
+Install all skills globally for Codex and Claude Code:
+
+```sh
+npx skills add Tbsheff/skills --skill '*' --global --agent codex --agent claude-code
+```
+
+Install one skill globally:
+
+```sh
+npx skills add Tbsheff/skills --skill typed-call-stack-planning --global --agent codex --agent claude-code
+```
+
+Omit `--global` to install into the current project. The Skills CLI uses your Git or GitHub CLI sign-in for private repositories.
 
 Each folder follows the Agent Skills layout and has a `SKILL.md` entry point.
