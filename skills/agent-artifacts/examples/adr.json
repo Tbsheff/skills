@@ -1,0 +1,115 @@
+{
+  "kind": "adr",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Put the rule in Semantic contract and delete every caller-side copy. The failure it must stop: a required decision, risk, or validation step disappears because the generated layout changes.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "adr_id": "ADR-010",
+  "decision_status": "accepted",
+  "context": "skills/agent-artifacts/ and src/agent_artifacts/schemas/ each apply the rule in their own way. The check can go missing from one path without a test turning red.",
+  "decision": "Semantic contract validates context, returns a typed rejection, and reports every outcome to CLI and MCP adapters. No other component may accept.",
+  "drivers": [
+    "One accountable owner",
+    "Deterministic failures",
+    "One place to change the rule"
+  ],
+  "alternatives": [
+    {
+      "name": "Keep checks in each caller",
+      "summary": "Every entry point enforces the rule locally.",
+      "advantages": [
+        "No migration"
+      ],
+      "disadvantages": [
+        "Omissions stay possible",
+        "Behavior drifts"
+      ],
+      "rejected_because": "Preserves the distributed responsibility that caused the failure.",
+      "selected": false
+    },
+    {
+      "name": "Centralize in Semantic contract",
+      "summary": "One component owns the contract, rejections, and output.",
+      "advantages": [
+        "One source of behavior",
+        "Consistent evidence"
+      ],
+      "disadvantages": [
+        "Callers migrate",
+        "Contract needs versioning"
+      ],
+      "selected": true
+    },
+    {
+      "name": "Hide it in middleware",
+      "summary": "A generic layer infers context before the domain call.",
+      "advantages": [
+        "Few caller changes"
+      ],
+      "disadvantages": [
+        "Context stays implicit",
+        "Failures are opaque"
+      ],
+      "rejected_because": "The decision needs explicit context, not transport inference.",
+      "selected": false
+    }
+  ],
+  "consequences": [
+    {
+      "type": "positive",
+      "description": "One place to verify the behavior: Semantic contract."
+    },
+    {
+      "type": "positive",
+      "description": "CLI and MCP adapters gets one auditable output."
+    },
+    {
+      "type": "negative",
+      "description": "Every caller adopts the contract. No convenience bypass."
+    }
+  ],
+  "reversibility": {
+    "level": "medium",
+    "notes": "Callers can return while compatibility code remains. Generated evidence must be rebuilt.",
+    "reversal_trigger": "Two consecutive releases fail on: Scenario regression lacks a required semantic section or fails visual review"
+  },
+  "migration": [
+    "Add the Semantic contract contract",
+    "Route skills/agent-artifacts/ through it",
+    "Delete the bypass in src/agent_artifacts/schemas/"
+  ],
+  "validation": [
+    "Alert fires when scenario regression lacks a required semantic section or fails visual review",
+    "A new caller needs no duplicate rules"
+  ],
+  "open_questions": [],
+  "subtitle": "One boundary owns the rule. Callers keep a rollback path until parity holds.",
+  "supersedes": [],
+  "related": [
+    "skills/agent-artifacts/",
+    "src/agent_artifacts/mcp_server.py"
+  ]
+}

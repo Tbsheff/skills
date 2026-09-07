@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "prove-it",
+    "version": "1.1.0"
+  },
+  "run": {
+    "id": "abc12345-20260904-180000",
+    "title": "Add service status check",
+    "created_at": "2026-09-04T18:00:00Z",
+    "repo_root": "/workspace/project",
+    "artifact_dir": "/tmp/prove-it-pr-123-abc12345-x7k2",
+    "ephemeral": true,
+    "mode": "fast"
+  },
+  "claims": [
+    {
+      "id": "C1",
+      "text": "The status endpoint reports that the service is ready.",
+      "expected": "GET /api/status returns 200 with status=ready.",
+      "method": "http",
+      "priority": "must",
+      "status": "passed",
+      "observed": "GET returned 200 and matched all assertions.",
+      "evidence": [
+        {
+          "type": "http",
+          "label": "Status API",
+          "status": "passed",
+          "path": "backend/c1-status-api.txt"
+        }
+      ]
+    }
+  ]
+}

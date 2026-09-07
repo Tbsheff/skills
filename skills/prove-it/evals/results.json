@@ -1,0 +1,152 @@
+{
+  "generated_at": "2026-09-05T02:20:24Z",
+  "browser_runtime": "Playwright compatibility harness using system Chromium; agent-browser CLI unavailable in sandbox",
+  "results": [
+    {
+      "repo": "sindresorhus/escape-string-regexp",
+      "fixture": "synthetic feature on fetched upstream source",
+      "scan": {
+        "base": "main",
+        "merge_base": "8191b90f6328e755611ee5e520ffab4db15187f9",
+        "head": "bf502a53f84192e55011300eccfa70d549148942",
+        "branch": "feature/regex-literal",
+        "dirty": false,
+        "files": [
+          {
+            "status": "M",
+            "path": "index.js",
+            "added": 4,
+            "deleted": 0,
+            "categories": [
+              "library"
+            ]
+          }
+        ],
+        "file_count": 1,
+        "additions": 4,
+        "deletions": 0,
+        "binary_file_count": 0,
+        "surfaces": [
+          "library"
+        ],
+        "risk": "normal",
+        "recommended_proof": "backend"
+      },
+      "timings_seconds": {
+        "scan": 0.07617859900005897,
+        "init": 0.08503234199997678,
+        "claim": 0.06585563499993441,
+        "proof": 0.09546642399993743,
+        "validate": 0.06518902599998455,
+        "render": 0.06852817799995137
+      },
+      "total_seconds": 0.4562502039998435,
+      "proof_dir": "/mnt/data/prove-it-build/prove-it/evals/artifacts/escape-string-regexp",
+      "wall_seconds": 0.45658586900003684
+    },
+    {
+      "repo": "h5bp/html5-boilerplate",
+      "fixture": "synthetic static UI change on fetched upstream source",
+      "scan": {
+        "base": "main",
+        "merge_base": "dc53dbe4c27238f5788ec7b902233547feee59d8",
+        "head": "90aa6f0aae4bad7d9c9c6a31db9e3b162fbf4707",
+        "branch": "feature/proof-hero",
+        "dirty": false,
+        "files": [
+          {
+            "status": "M",
+            "path": "css/style.css",
+            "added": 5,
+            "deleted": 2,
+            "categories": [
+              "frontend"
+            ]
+          },
+          {
+            "status": "M",
+            "path": "index.html",
+            "added": 8,
+            "deleted": 5,
+            "categories": [
+              "frontend"
+            ]
+          }
+        ],
+        "file_count": 2,
+        "additions": 13,
+        "deletions": 7,
+        "binary_file_count": 0,
+        "surfaces": [
+          "frontend"
+        ],
+        "risk": "normal",
+        "recommended_proof": "screenshot"
+      },
+      "timings_seconds": {
+        "scan": 0.07617268500007413,
+        "init": 0.07114305400000376,
+        "claim": 0.06000739099999919,
+        "browser": 0.7197684369999706,
+        "add_screenshot": 0.06288419600002726,
+        "add_console": 0.06508580599995639,
+        "add_errors": 0.06141215100001318,
+        "validate": 0.06454392000000553,
+        "render": 0.0640021250000018
+      },
+      "total_seconds": 1.2450197650000518,
+      "proof_dir": "/mnt/data/prove-it-build/prove-it/evals/artifacts/html5-boilerplate",
+      "wall_seconds": 1.2456552219999821
+    },
+    {
+      "repo": "fastapi/fastapi",
+      "fixture": "synthetic mixed API/UI change on fetched upstream source",
+      "scan": {
+        "base": "main",
+        "merge_base": "fd782b02aebc0b99277059d00e1502d42670c57f",
+        "head": "9bc383d5a1db80ffbde7808fb72b2584d7ed9da7",
+        "branch": "feature/status-check",
+        "dirty": true,
+        "files": [
+          {
+            "status": "M",
+            "path": "docs_src/custom_response/tutorial002_py310.py",
+            "added": 17,
+            "deleted": 2,
+            "categories": [
+              "backend",
+              "frontend"
+            ]
+          }
+        ],
+        "file_count": 1,
+        "additions": 17,
+        "deletions": 2,
+        "binary_file_count": 0,
+        "surfaces": [
+          "backend",
+          "frontend"
+        ],
+        "risk": "medium",
+        "recommended_proof": "mixed"
+      },
+      "timings_seconds": {
+        "scan": 0.07464674899995316,
+        "init": 0.07272879100003138,
+        "claim_api": 0.05975766899996415,
+        "claim_ui": 0.061201359000051525,
+        "http": 0.07011625799998455,
+        "browser": 1.9571629440000606,
+        "add_screenshot": 0.06396039699995981,
+        "add_video": 0.12154362399996899,
+        "add_console": 0.05845819000001029,
+        "add_errors": 0.0641614840000102,
+        "validate": 0.06256430500002352,
+        "render": 0.06296903899999506
+      },
+      "total_seconds": 2.7292708090000133,
+      "proof_dir": "/mnt/data/prove-it-build/prove-it/evals/artifacts/fastapi",
+      "wall_seconds": 3.7824167899999566
+    }
+  ]
+}

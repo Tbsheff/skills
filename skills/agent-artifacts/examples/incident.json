@@ -1,0 +1,93 @@
+{
+  "kind": "incident",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "A compatibility path bypassed Semantic contract.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "A second occurrence after the bypass in skills/agent-artifacts/ is deleted."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "incident_id": "INC-202610",
+  "severity": "SEV-3",
+  "incident_status": "resolved",
+  "impact": "A required decision, risk, or validation step disappears because the generated layout changes.",
+  "started_at": "09:12 local",
+  "ended_at": "10:04 local",
+  "duration": "52 minutes",
+  "detection": "Scenario regression lacks a required semantic section or fails visual review at 09:12. Connecting that symptom to the bypass in skills/agent-artifacts/ took 25 more minutes.",
+  "timeline": [
+    {
+      "time": "09:12",
+      "event": "First invalid result reached the consumer",
+      "signal": "Scenario regression lacks a required semantic section or fails visual review.",
+      "action": "Traced the request id"
+    },
+    {
+      "time": "09:37",
+      "event": "Bypass identified",
+      "signal": "skills/agent-artifacts/ called Artifact engine directly",
+      "action": "Disabled the bypass"
+    },
+    {
+      "time": "10:04",
+      "event": "Terminal state reconciled",
+      "signal": "80 scenario fixtures pass",
+      "action": "Resolved, monitoring retained"
+    }
+  ],
+  "root_cause": "The compatibility path skipped Semantic contract, so Artifact engine ran without the rejection rules the design assumed.",
+  "contributing_factors": [
+    "The old path stayed reachable after rollout",
+    "No fixture asserted a terminal record per caller"
+  ],
+  "resolution": "Disabled the compatibility path. Routed the caller through Semantic contract and reconciled CLI and MCP adapters.",
+  "actions": [
+    {
+      "text": "Delete the bypass",
+      "owner": "Agent platform",
+      "due": "7 days",
+      "status": "doing",
+      "verification": "No direct Agent skill to Artifact engine call remains"
+    },
+    {
+      "text": "Alert on missing terminal events",
+      "owner": "Agent platform",
+      "due": "3 days",
+      "status": "todo",
+      "verification": "Alert fires when scenario regression lacks a required semantic section or fails visual review"
+    }
+  ],
+  "lessons": [
+    "A healthy boundary is no proof that callers used it",
+    "Compatibility paths need an owner and a deletion condition on day one"
+  ],
+  "counterfactuals": [
+    "A test asserting one terminal event per request would have blocked the release"
+  ],
+  "subtitle": "A caller skipped the boundary, so a rendered artifact shipped without its risk section.",
+  "invariants": [
+    "Artifact engine never runs on a context Semantic contract rejected.",
+    "Two requests never share one semanticContractRunId.",
+    "A failed check never reaches CLI and MCP adapters."
+  ]
+}

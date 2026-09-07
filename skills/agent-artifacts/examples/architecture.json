@@ -1,0 +1,330 @@
+{
+  "kind": "architecture",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Semantic contract validates before Artifact engine acts. CLI and MCP adapters records the result.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "purpose": "Agents write evidence-backed semantic contracts and one engine renders predictable HTML and durable Markdown.",
+  "scope": "The request path from Agent skill to CLI and MCP adapters. Adjacent domains are out of scope.",
+  "boundaries": [
+    "Semantic contract owns validation",
+    "CLI and MCP adapters refuses unvalidated output"
+  ],
+  "components": [
+    {
+      "id": "n1",
+      "name": "Agent skill",
+      "responsibility": "Accepts the request and its context",
+      "owns": [
+        "Request context"
+      ],
+      "interfaces": [
+        "Semantic contract"
+      ],
+      "source_locations": [
+        "skills/agent-artifacts/"
+      ],
+      "status": "current"
+    },
+    {
+      "id": "n2",
+      "name": "Semantic contract",
+      "responsibility": "Enforces the boundary and rejects invalid state",
+      "owns": [
+        "Validation rules",
+        "Rejection codes"
+      ],
+      "interfaces": [
+        "Agent skill",
+        "Artifact engine"
+      ],
+      "source_locations": [
+        "src/agent_artifacts/schemas/"
+      ],
+      "status": "new"
+    },
+    {
+      "id": "n3",
+      "name": "Artifact engine",
+      "responsibility": "Owns the domain behavior",
+      "owns": [
+        "Domain behavior"
+      ],
+      "interfaces": [
+        "Semantic contract",
+        "CLI and MCP adapters"
+      ],
+      "source_locations": [
+        "src/agent_artifacts/renderers.py"
+      ],
+      "status": "new"
+    },
+    {
+      "id": "n4",
+      "name": "CLI and MCP adapters",
+      "responsibility": "Records the verified result",
+      "owns": [
+        "Result evidence"
+      ],
+      "interfaces": [
+        "Artifact engine"
+      ],
+      "source_locations": [
+        "src/agent_artifacts/mcp_server.py"
+      ],
+      "status": "current"
+    }
+  ],
+  "diagram": {
+    "title": "Standardize engineering artifacts across agents",
+    "caption": "One boundary stands between the request and CLI and MCP adapters.",
+    "nodes": [
+      {
+        "id": "n1",
+        "label": "Agent skill",
+        "status": "current"
+      },
+      {
+        "id": "n2",
+        "label": "Semantic contract",
+        "status": "new"
+      },
+      {
+        "id": "n3",
+        "label": "Artifact engine",
+        "status": "new"
+      },
+      {
+        "id": "n4",
+        "label": "CLI and MCP adapters",
+        "status": "current"
+      }
+    ],
+    "edges": [
+      {
+        "from": "n1",
+        "to": "n2",
+        "label": "request"
+      },
+      {
+        "from": "n2",
+        "to": "n3",
+        "label": "validated contract"
+      },
+      {
+        "from": "n3",
+        "to": "n4",
+        "label": "observable result"
+      }
+    ]
+  },
+  "flows": [
+    {
+      "name": "Accepted path",
+      "steps": [
+        "Agent skill supplies context",
+        "Semantic contract validates",
+        "Artifact engine applies the behavior",
+        "CLI and MCP adapters records"
+      ],
+      "failure_path": "Invalid context stops in Semantic contract."
+    }
+  ],
+  "data_ownership": [
+    {
+      "data": "Request context",
+      "owner": "Agent skill",
+      "readers": [
+        "Semantic contract"
+      ],
+      "writes": "Once, at the entry point"
+    },
+    {
+      "data": "Validated decision",
+      "owner": "Semantic contract",
+      "readers": [
+        "Artifact engine",
+        "CLI and MCP adapters"
+      ],
+      "writes": "Only after all checks pass"
+    }
+  ],
+  "invariants": [
+    "No caller bypasses the boundary",
+    "Rejected inputs cause no side effects",
+    "Every accepted request leaves one record in CLI and MCP adapters"
+  ],
+  "failure_modes": [
+    {
+      "failure": "A required decision, risk, or validation step disappears because the generated layout changes.",
+      "effect": "Artifact engine acts on unvalidated context and CLI and MCP adapters records a result nobody can trust",
+      "containment": "Reject in Semantic contract and record why",
+      "signal": "Scenario regression lacks a required semantic section or fails visual review."
+    }
+  ],
+  "security_notes": [
+    "CLI and MCP adapters records ids and decisions, never payloads",
+    "A rejection in Semantic contract leaves no partial write"
+  ],
+  "source_locations": [
+    "skills/agent-artifacts/",
+    "src/agent_artifacts/schemas/",
+    "src/agent_artifacts/renderers.py",
+    "src/agent_artifacts/mcp_server.py"
+  ],
+  "subtitle": "Where the artifact rule lives today, and the one boundary that will own it.",
+  "naming": {
+    "verbs": [
+      "start",
+      "validate",
+      "apply",
+      "record"
+    ],
+    "nouns": [
+      "agentSkill",
+      "semanticContract",
+      "artifactEngine",
+      "cliAndMcpAdapters"
+    ],
+    "functions": [
+      "startAgentSkill()",
+      "validateSemanticContract()",
+      "applyArtifactEngine()",
+      "recordCliAndMcpAdapters()"
+    ],
+    "renames": [
+      {
+        "current": "agentArtifacts()",
+        "proposed": "validateSemanticContract()",
+        "why": "Names the decision, not the file."
+      }
+    ],
+    "mapping": [
+      {
+        "external": "correlationId",
+        "domain": "semanticContractRunId"
+      }
+    ]
+  },
+  "file_tree": {
+    "caption": "Only what the change touches.",
+    "entries": [
+      {
+        "path": "src/agent_artifacts/schemas/",
+        "depth": 0
+      },
+      {
+        "path": "validateSemanticContract.ts",
+        "depth": 1,
+        "change": "new",
+        "note": "rejects here"
+      },
+      {
+        "path": "applyArtifactEngine.ts",
+        "depth": 1,
+        "change": "new"
+      },
+      {
+        "path": "recordCliAndMcpAdapters.ts",
+        "depth": 1,
+        "change": "changed",
+        "note": "emits run id"
+      },
+      {
+        "path": "skills/agent-artifacts/",
+        "depth": 0,
+        "change": "removed",
+        "note": "bypass"
+      },
+      {
+        "path": "src/agent_artifacts/mcp_server.py",
+        "depth": 0,
+        "change": "changed",
+        "note": "cross-boundary"
+      }
+    ]
+  },
+  "call_stacks": [
+    {
+      "title": "Traced call flow",
+      "entry": "startAgentSkill()",
+      "note": "Traced from the source.",
+      "calls": [
+        {
+          "call": "agentArtifacts()",
+          "depth": 1,
+          "status": "removed"
+        },
+        {
+          "call": "validateSemanticContract()",
+          "depth": 1,
+          "status": "added",
+          "boundary": "Agent skill -> Semantic contract boundary"
+        },
+        {
+          "call": "applyArtifactEngine()",
+          "depth": 2,
+          "status": "added"
+        },
+        {
+          "call": "recordCliAndMcpAdapters()",
+          "depth": 2,
+          "status": "moved",
+          "annotation": "MOVED"
+        }
+      ]
+    }
+  ],
+  "api_contracts": [
+    {
+      "call": "POST /semantic-contract",
+      "caller": "Agent skill",
+      "callee": "Semantic contract",
+      "request": "{\n  \"semanticContractRunId\": \"uuid\",\n  \"actorId\": \"uuid\",\n  \"resourceId\": \"uuid\"\n}",
+      "response": "202 Accepted\n{\n  \"semanticContractRunId\": \"uuid\",\n  \"status\": \"QUEUED\"\n}",
+      "idempotency": "semanticContractRunId",
+      "note": "A repeat with the same id returns the first result."
+    }
+  ],
+  "pseudocode": [
+    {
+      "title": "Boundary check",
+      "language": "ts",
+      "code": "function validateSemanticContract(input) {\n  const context = readContext(input)\n  if (!ownsResource(context)) {\n    return reject('NOT_OWNED')\n  }\n  const result = applyArtifactEngine(context)\n  recordCliAndMcpAdapters(context.runId, result)\n  return result\n}",
+      "annotations": [
+        {
+          "line": 3,
+          "text": "precondition"
+        },
+        {
+          "line": 7,
+          "text": "atomic boundary"
+        }
+      ],
+      "note": "CLI and MCP adapters records the result only after the ownership check passes. A rejection returns before any side effect."
+    }
+  ]
+}

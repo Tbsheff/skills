@@ -1,0 +1,80 @@
+{
+  "kind": "progress",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Semantic contract enforces the rule on one path. The old path remains for rollback.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "overall_status": "on-track",
+  "completion": 92,
+  "period": "Implementation update 10",
+  "plan_ref": "examples/rendered/plan/agent-artifacts.html",
+  "since_last_update": [
+    "Routed skills/agent-artifacts/ through the boundary",
+    "Added the parity fixture; it is green on one path"
+  ],
+  "completed": [
+    {
+      "item": "Current-state map",
+      "evidence": "skills/agent-artifacts/ through src/agent_artifacts/schemas/",
+      "date": "2026-09-02"
+    }
+  ],
+  "in_progress": [],
+  "blockers": [],
+  "decisions": [
+    {
+      "decision": "Keep the old path only as rollback",
+      "rationale": "Not a supported parallel architecture.",
+      "date": "2026-09-02"
+    }
+  ],
+  "drift": [
+    {
+      "original": "Remove the old path in this slice",
+      "current": "Keep it one window",
+      "reason": "The signal needs production data",
+      "impact": "One extra cleanup slice",
+      "accepted": true
+    }
+  ],
+  "next_actions": [
+    {
+      "text": "Run the parity fixtures",
+      "owner": "Agent platform",
+      "due": "Next update",
+      "status": "doing",
+      "verification": "Both paths produce the same output"
+    },
+    {
+      "text": "Record the removal owner and date",
+      "owner": "Agent platform",
+      "due": "Before rollout",
+      "status": "todo",
+      "verification": "The plan names one owner"
+    }
+  ],
+  "subtitle": "Two of three slices are done. The bypass in the old entry point is still reachable."
+}

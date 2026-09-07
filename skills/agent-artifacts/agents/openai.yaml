@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Artifacts"
+  short_description: "Create concise plans, ADRs, architecture records, reports, reviews, incidents, and handoffs."
+  brand_color: "#17324D"
+  default_prompt: "Turn this engineering work into the right Agent Artifacts semantic contract, validate it, render it, and verify the result."
+policy:
+  allow_implicit_invocation: true

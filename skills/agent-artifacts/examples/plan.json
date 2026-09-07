@@ -1,0 +1,273 @@
+{
+  "kind": "plan",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Make Semantic contract the one enforcement point. Ship behind a switch, then delete the old path.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "status": "active",
+  "objective": "Agents write evidence-backed semantic contracts and one engine renders predictable HTML and durable Markdown.",
+  "current_state": "Plans, ADRs, reviews, and handoffs change structure and visual emphasis from one model session to the next.",
+  "approach": "Route one slice through Semantic contract. Delete the old path once parity holds.",
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "Lock the current behavior",
+      "outcome": "A source-backed map and a failing test.",
+      "status": "done",
+      "timing": "Slice 1",
+      "details": [
+        "Read skills/agent-artifacts/"
+      ],
+      "verification": [
+        "The failure test is red"
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Route one path through it",
+      "outcome": "CLI and MCP adapters is reachable only through Semantic contract.",
+      "status": "active",
+      "timing": "Slice 2",
+      "verification": [
+        "The bypass fixture fails closed in Semantic contract"
+      ],
+      "depends_on": [
+        "M1"
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Remove the bypass",
+      "outcome": "The old path is unreachable.",
+      "status": "pending",
+      "timing": "Slice 3",
+      "verification": [
+        "80 scenario fixtures pass"
+      ],
+      "depends_on": [
+        "M2"
+      ]
+    }
+  ],
+  "affected_areas": [
+    {
+      "name": "Agent skill",
+      "change": "Calls the boundary with context",
+      "risk": "Keeps the bypass",
+      "locations": [
+        "skills/agent-artifacts/",
+        "src/agent_artifacts/schemas/"
+      ]
+    },
+    {
+      "name": "Semantic contract",
+      "change": "Owns validation and rejection",
+      "risk": "A rigid contract may make uncommon but legitimate document shapes difficult to express.",
+      "locations": [
+        "src/agent_artifacts/schemas/",
+        "src/agent_artifacts/renderers.py"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "risk": "A rigid contract may make uncommon but legitimate document shapes difficult to express.",
+      "likelihood": "medium",
+      "impact": "high",
+      "mitigation": "Ship behind a switch. Block removal until parity holds.",
+      "trigger": "Scenario regression lacks a required semantic section or fails visual review.",
+      "owner": "Agent platform"
+    },
+    {
+      "risk": "Cleanup spreads into src/agent_artifacts/renderers.py",
+      "likelihood": "medium",
+      "impact": "medium",
+      "mitigation": "Move refactors to a follow-up",
+      "trigger": "A milestone touches a file outside skills/agent-artifacts/ or src/agent_artifacts/schemas/",
+      "owner": "Agent platform"
+    }
+  ],
+  "non_goals": [
+    "Redesign Artifact engine beyond the call it already makes",
+    "Any change under tests/ other than the parity fixture"
+  ],
+  "rollback": [
+    "Disable the Semantic contract route",
+    "Restore skills/agent-artifacts/ as the entry point",
+    "Replay the fixture in src/agent_artifacts/mcp_server.py"
+  ],
+  "verification": [
+    {
+      "check": "Contract",
+      "method": "Run valid, invalid, cross-boundary fixtures",
+      "success": "80 scenario fixtures pass"
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Who owns removing the old path?",
+      "owner": "Agent platform",
+      "due": "Before M3",
+      "default": "Keep both",
+      "status": "open"
+    }
+  ],
+  "subtitle": "Three slices: lock behavior, route one path, delete the bypass.",
+  "naming": {
+    "verbs": [
+      "start",
+      "validate",
+      "apply",
+      "record"
+    ],
+    "nouns": [
+      "agentSkill",
+      "semanticContract",
+      "artifactEngine",
+      "cliAndMcpAdapters"
+    ],
+    "functions": [
+      "startAgentSkill()",
+      "validateSemanticContract()",
+      "applyArtifactEngine()",
+      "recordCliAndMcpAdapters()"
+    ],
+    "renames": [
+      {
+        "current": "agentArtifacts()",
+        "proposed": "validateSemanticContract()",
+        "why": "Names the decision, not the file."
+      }
+    ],
+    "mapping": [
+      {
+        "external": "correlationId",
+        "domain": "semanticContractRunId"
+      }
+    ]
+  },
+  "file_tree": {
+    "caption": "Only what the change touches.",
+    "entries": [
+      {
+        "path": "src/agent_artifacts/schemas/",
+        "depth": 0
+      },
+      {
+        "path": "validateSemanticContract.ts",
+        "depth": 1,
+        "change": "new",
+        "note": "rejects here"
+      },
+      {
+        "path": "applyArtifactEngine.ts",
+        "depth": 1,
+        "change": "new"
+      },
+      {
+        "path": "recordCliAndMcpAdapters.ts",
+        "depth": 1,
+        "change": "changed",
+        "note": "emits run id"
+      },
+      {
+        "path": "skills/agent-artifacts/",
+        "depth": 0,
+        "change": "removed",
+        "note": "bypass"
+      },
+      {
+        "path": "src/agent_artifacts/mcp_server.py",
+        "depth": 0,
+        "change": "changed",
+        "note": "cross-boundary"
+      }
+    ]
+  },
+  "call_flow": {
+    "title": "Proposed call flow",
+    "entry": "startAgentSkill()",
+    "note": "Proposed, not observed.",
+    "calls": [
+      {
+        "call": "agentArtifacts()",
+        "depth": 1,
+        "status": "removed"
+      },
+      {
+        "call": "validateSemanticContract()",
+        "depth": 1,
+        "status": "added",
+        "boundary": "Agent skill -> Semantic contract boundary"
+      },
+      {
+        "call": "applyArtifactEngine()",
+        "depth": 2,
+        "status": "added"
+      },
+      {
+        "call": "recordCliAndMcpAdapters()",
+        "depth": 2,
+        "status": "moved",
+        "annotation": "MOVED"
+      }
+    ]
+  },
+  "api_contracts": [
+    {
+      "call": "POST /semantic-contract",
+      "caller": "Agent skill",
+      "callee": "Semantic contract",
+      "request": "{\n  \"semanticContractRunId\": \"uuid\",\n  \"actorId\": \"uuid\",\n  \"resourceId\": \"uuid\"\n}",
+      "response": "202 Accepted\n{\n  \"semanticContractRunId\": \"uuid\",\n  \"status\": \"QUEUED\"\n}",
+      "idempotency": "semanticContractRunId",
+      "note": "A repeat with the same id returns the first result."
+    }
+  ],
+  "pseudocode": [
+    {
+      "title": "Boundary check",
+      "language": "ts",
+      "code": "function validateSemanticContract(input) {\n  const context = readContext(input)\n  if (!ownsResource(context)) {\n    return reject('NOT_OWNED')\n  }\n  const result = applyArtifactEngine(context)\n  recordCliAndMcpAdapters(context.runId, result)\n  return result\n}",
+      "annotations": [
+        {
+          "line": 3,
+          "text": "precondition"
+        },
+        {
+          "line": 7,
+          "text": "atomic boundary"
+        }
+      ],
+      "note": "CLI and MCP adapters records the result only after the ownership check passes. A rejection returns before any side effect."
+    }
+  ],
+  "invariants": [
+    "Artifact engine never runs on a context Semantic contract rejected.",
+    "Two requests never share one semanticContractRunId.",
+    "A failed check never reaches CLI and MCP adapters."
+  ]
+}

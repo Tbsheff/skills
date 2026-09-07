@@ -1,0 +1,101 @@
+{
+  "kind": "research",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Put the rule in Semantic contract. Prove it with one end-to-end path.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "question": "What must own this outcome so that it cannot happen: a required decision, risk, or validation step disappears because the generated layout changes.",
+  "answer": "Semantic contract must own it, as the one explicit boundary. Caller-owned rules go once parity holds.",
+  "method": "Read skills/agent-artifacts/ and src/agent_artifacts/mcp_server.py. Compare distributed, middleware, and explicit-boundary options.",
+  "findings": [
+    {
+      "title": "Distributed ownership keeps the failure",
+      "claim": "Every entry point repeats the rule, so one omission is enough: a required decision, risk, or validation step disappears because the generated layout changes.",
+      "evidence": [
+        {
+          "claim": "Responsibility is repeated",
+          "detail": "Plans, ADRs, reviews, and handoffs change structure and visual emphasis from one model session to the next.",
+          "source": "skills/agent-artifacts/",
+          "confidence": "high"
+        },
+        {
+          "claim": "The failure is observable",
+          "detail": "Scenario regression lacks a required semantic section or fails visual review.",
+          "source": "src/agent_artifacts/mcp_server.py",
+          "confidence": "medium"
+        }
+      ],
+      "implication": "Semantic contract should own the rule, not help callers implement it.",
+      "confidence": "high",
+      "counterpoint": "Centralization grows into a generic service unless its scope stays narrow."
+    },
+    {
+      "title": "Reversibility beats immediate cleanup",
+      "claim": "The safest first release keeps the old path as rollback while outcomes are compared.",
+      "evidence": [
+        {
+          "claim": "The change crosses a shared boundary",
+          "detail": "A rigid contract may make uncommon but legitimate document shapes difficult to express.",
+          "source": "src/agent_artifacts/schemas/",
+          "confidence": "medium"
+        }
+      ],
+      "implication": "Removing compatibility code is its own milestone with one owner.",
+      "confidence": "medium",
+      "counterpoint": "Held too long, compatibility becomes a second supported architecture."
+    }
+  ],
+  "competing_views": [
+    {
+      "view": "Caller-owned checks",
+      "support": "Small diffs, no migration",
+      "limitation": "No single authoritative audit path"
+    },
+    {
+      "view": "Transport middleware",
+      "support": "Covers many requests cheaply",
+      "limitation": "Infers context and hides why a request failed"
+    }
+  ],
+  "recommendations": [
+    {
+      "recommendation": "Make Semantic contract the single boundary",
+      "why": "Contains the failure and gives CLI and MCP adapters one output.",
+      "confidence": "high",
+      "next_test": "Scenario regression lacks a required semantic section or fails visual review."
+    },
+    {
+      "recommendation": "Pilot one path before migrating",
+      "why": "Exposes missing context before callers depend on it.",
+      "confidence": "high",
+      "next_test": "80 scenario fixtures pass"
+    }
+  ],
+  "unknowns": [
+    "How long skills/agent-artifacts/ must stay reachable before the old path can be deleted"
+  ],
+  "subtitle": "Three ownership options, one that survives the failure the others keep."
+}

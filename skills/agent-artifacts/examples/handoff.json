@@ -1,0 +1,114 @@
+{
+  "kind": "handoff",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "One caller path runs through Semantic contract; skills/agent-artifacts/ still bypasses it. Close parity there before touching anything else.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "objective": "Agents write evidence-backed semantic contracts and one engine renders predictable HTML and durable Markdown.",
+  "current_state": "One flow runs through the new boundary. The old path stays for rollback. Finish parity, watch the signal, delete the bypass.",
+  "completed": [
+    "Mapped skills/agent-artifacts/ through CLI and MCP adapters",
+    "Validation lives in Semantic contract",
+    "Fixture for: A required decision, risk, or validation step disappears because the generated layout changes."
+  ],
+  "decisions": [
+    {
+      "decision": "Semantic contract owns the boundary",
+      "why": "Distributed checks keep the failure and produce no single auditable result.",
+      "reference": "examples/rendered/adr/agent-artifacts.html"
+    },
+    {
+      "decision": "Compatibility is rollback only",
+      "why": "A second permanent path makes the decision unenforceable.",
+      "reference": "examples/rendered/plan/agent-artifacts.html"
+    }
+  ],
+  "mental_model": "Agent skill supplies context, Semantic contract accepts or rejects, Artifact engine acts, CLI and MCP adapters records. Skip a step and the request is invalid.",
+  "files": [
+    {
+      "path": "skills/agent-artifacts/",
+      "purpose": "Entry point; still holds the bypass",
+      "state": "Read first"
+    },
+    {
+      "path": "src/agent_artifacts/schemas/",
+      "purpose": "Semantic contract lives here: validation and rejection rules",
+      "state": "Done for one path"
+    },
+    {
+      "path": "tests/test_rendering.py",
+      "purpose": "Parity fixtures for both paths",
+      "state": "Keep green"
+    }
+  ],
+  "known_issues": [
+    {
+      "issue": "A rigid contract may make uncommon but legitimate document shapes difficult to express.",
+      "impact": "Wider rollout could produce an unexplained result",
+      "workaround": "Hold rollout until the signal is clean",
+      "owner": "Agent platform"
+    }
+  ],
+  "next_steps": [
+    {
+      "text": "Run parity fixtures for the remaining callers",
+      "owner": "Agent platform",
+      "due": "Next session",
+      "status": "doing",
+      "verification": "80 scenario fixtures pass"
+    },
+    {
+      "text": "Remove the compatibility path",
+      "owner": "Agent platform",
+      "due": "After the window",
+      "status": "todo",
+      "verification": "Nothing bypasses Semantic contract"
+    }
+  ],
+  "validation": [
+    "Run src/agent_artifacts/mcp_server.py",
+    "Alert fires when scenario regression lacks a required semantic section or fails visual review"
+  ],
+  "boundaries": [
+    "Redesign Artifact engine",
+    "Close rollback before the target is met: 80 scenario fixtures pass"
+  ],
+  "open_questions": [
+    {
+      "question": "When does the observation window end?",
+      "owner": "Agent platform",
+      "due": "Before compatibility removal",
+      "default": "Keep rollback available",
+      "status": "open"
+    }
+  ],
+  "subtitle": "One path runs through the boundary. The bypass is still reachable.",
+  "invariants": [
+    "Artifact engine never runs on a context Semantic contract rejected.",
+    "Two requests never share one semanticContractRunId.",
+    "A failed check never reaches CLI and MCP adapters."
+  ]
+}

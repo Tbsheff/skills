@@ -1,0 +1,22 @@
+{
+  "base": "origin/main",
+  "budgets": {
+    "max_claims": 3,
+    "max_commands": 3,
+    "max_screenshots": 2,
+    "max_videos": 1,
+    "max_video_seconds": 30
+  },
+  "app": {
+    "start": "pnpm dev",
+    "url": "http://127.0.0.1:3000",
+    "ready": "http://127.0.0.1:3000/api/health"
+  },
+  "browser": {
+    "viewport": [1440, 900],
+    "record_fps": 12,
+    "restore": true,
+    "restore_check_text": "Dashboard"
+  },
+  "areas": []
+}

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+set -eu
+exec python3 -S "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/prove.py" "$@"

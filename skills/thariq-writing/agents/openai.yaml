@@ -1,0 +1,4 @@
+interface:
+  display_name: "Thariq Writing"
+  short_description: "Write practical agent-era technical essays"
+  default_prompt: "Use $thariq-writing to draft a practical technical blog post from this idea."

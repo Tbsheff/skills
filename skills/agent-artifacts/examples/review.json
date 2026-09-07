@@ -1,0 +1,64 @@
+{
+  "kind": "review",
+  "title": "Standardize engineering artifacts across agents",
+  "date": "2026-09-02",
+  "owner": "Agent platform",
+  "summary": {
+    "answer": "Approved. Artifact engine is reachable only through Semantic contract, and a fixture holds that closed.",
+    "context": "Today skills/agent-artifacts/ and src/agent_artifacts/schemas/ each decide which sections an artifact must carry on their own.",
+    "confidence": "medium",
+    "what_changes_it": "Scenario regression lacks a required semantic section or fails visual review."
+  },
+  "metrics": [
+    {
+      "label": "Target",
+      "value": "80 scenario fixtures pass"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Current entry point",
+      "location": "skills/agent-artifacts/",
+      "kind": "code"
+    },
+    {
+      "label": "Expected-behavior tests",
+      "location": "tests/test_validation.py",
+      "kind": "file"
+    }
+  ],
+  "subject": "The artifact rule and every caller that renders one",
+  "verdict": "approve",
+  "scope": [
+    "skills/agent-artifacts/",
+    "src/agent_artifacts/schemas/",
+    "src/agent_artifacts/mcp_server.py"
+  ],
+  "risk_summary": "Scope meets the target with a tested rollback. Residual risk: future bypasses of Semantic contract.",
+  "findings": [
+    {
+      "id": "N1",
+      "severity": "note",
+      "title": "Keep the boundary in follow-up work",
+      "failure": "A future convenience path could reintroduce distributed responsibility.",
+      "evidence": "The path routes through Semantic contract and records a terminal result.",
+      "recommendation": "Make the boundary test a required fixture.",
+      "location": "src/agent_artifacts/mcp_server.py",
+      "owner": "Agent platform"
+    }
+  ],
+  "strengths": [
+    "Semantic contract has one responsibility",
+    "The old path is rollback, not a second architecture"
+  ],
+  "reviewer_focus": [
+    "Alert fires when scenario regression lacks a required semantic section or fails visual review",
+    "Every caller uses the contract"
+  ],
+  "verification": [
+    "Read skills/agent-artifacts/ and src/agent_artifacts/schemas/",
+    "Ran the fixture in src/agent_artifacts/mcp_server.py",
+    "Traced one request from Agent skill to CLI and MCP adapters"
+  ],
+  "subtitle": "The boundary is right. One caller still reaches past it."
+}

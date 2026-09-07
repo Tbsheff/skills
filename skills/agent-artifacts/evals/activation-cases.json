@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Routing cases for evaluating whether an agent should invoke Agent Artifacts and which semantic kind it should select.",
+  "cases": [
+    {"id": "plan-direct", "prompt": "Make a plan for moving authorization into session lookup.", "trigger": true, "kind": "plan"},
+    {"id": "plan-handoff", "prompt": "Write up exactly how another engineer should execute this database migration, including rollback and verification.", "trigger": true, "kind": "plan"},
+    {"id": "progress-direct", "prompt": "Give me a progress report for the WellSky ingest migration.", "trigger": true, "kind": "progress"},
+    {"id": "progress-drift", "prompt": "Show what shipped, what drifted from our original approach, what is blocked, and the next three moves.", "trigger": true, "kind": "progress"},
+    {"id": "adr-direct", "prompt": "Write the ADR for choosing session-bound authorization.", "trigger": true, "kind": "adr"},
+    {"id": "adr-decision", "prompt": "Capture why we chose read replicas over application caching and what alternatives lost.", "trigger": true, "kind": "adr"},
+    {"id": "architecture-direct", "prompt": "Explain the authorization architecture and data flow.", "trigger": true, "kind": "architecture"},
+    {"id": "architecture-onboarding", "prompt": "Create a mental model of this service for the next engineer, including boundaries, ownership, entry points, and failure modes.", "trigger": true, "kind": "architecture"},
+    {"id": "review-direct", "prompt": "Review this PR and put blocking findings first.", "trigger": true, "kind": "review"},
+    {"id": "review-audit", "prompt": "Audit this implementation against the plan and give me a verdict with evidence.", "trigger": true, "kind": "review"},
+    {"id": "research-direct", "prompt": "Research logical replication restart failures and synthesize the evidence and unknowns.", "trigger": true, "kind": "research"},
+    {"id": "research-options", "prompt": "Investigate three OCR replacement approaches and tell me what the evidence actually establishes.", "trigger": true, "kind": "research"},
+    {"id": "incident-direct", "prompt": "Write the incident report for QA jobs being assigned before redaction finished.", "trigger": true, "kind": "incident"},
+    {"id": "incident-postmortem", "prompt": "Build a postmortem with impact, timeline, mechanism, recovery, and prevention owners.", "trigger": true, "kind": "incident"},
+    {"id": "handoff-direct", "prompt": "Create a handoff for the agent artifact work so another engineer can resume it.", "trigger": true, "kind": "handoff"},
+    {"id": "handoff-resume", "prompt": "Package the current mental model, decisions, changed files, remaining risks, and exact next commands for the next agent.", "trigger": true, "kind": "handoff"},
+    {"id": "markdown-short", "prompt": "What does this function return?", "trigger": false, "kind": null},
+    {"id": "markdown-notes", "prompt": "Clean up these five meeting notes as Markdown.", "trigger": false, "kind": null},
+    {"id": "markdown-command", "prompt": "Give me the shell command to run the tests.", "trigger": false, "kind": null},
+    {"id": "markdown-email", "prompt": "Rewrite this short email more clearly.", "trigger": false, "kind": null},
+    {"id": "ambiguous-status", "prompt": "Tell the team where this project stands.", "trigger": true, "kind": "progress"},
+    {"id": "ambiguous-choice", "prompt": "Document our choice and the tradeoffs.", "trigger": true, "kind": "adr"},
+    {"id": "ambiguous-system", "prompt": "Make this system understandable to someone picking it up tomorrow.", "trigger": true, "kind": "architecture"},
+    {"id": "ambiguous-work", "prompt": "Make this actionable for a different engineer.", "trigger": true, "kind": "plan"}
+  ]
+}
