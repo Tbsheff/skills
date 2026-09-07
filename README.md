@@ -6,7 +6,6 @@ Agent skills created and maintained by Tyler Sheffield.
 
 - `abstraction-design-coach` — Design and simplify software abstractions.
 - `agent-artifacts` — Build checked engineering artifacts from structured data.
-- `papercut` — Use the Papercut CLI as local development-friction memory.
 - `prove-it` — Add visible proof to an existing pull request.
 - `thariq-writing` — Write direct, practical technical posts.
 - `the-hemingway-rule` — Keep plans, audits, and explanations concise.
@@ -28,4 +27,3 @@ ln -s "$PWD/skills/typed-call-stack-planning" ~/.agents/skills/typed-call-stack-
 ```
 
 Each folder follows the Agent Skills layout and has a `SKILL.md` entry point.
-
