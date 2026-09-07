@@ -14,12 +14,6 @@ Agent skills created and maintained by Tyler Sheffield.
 
 ## Install
 
-The repository is private, so sign in with the GitHub CLI first:
-
-```sh
-gh auth login
-```
-
 List the available skills without installing them:
 
 ```sh
@@ -38,6 +32,6 @@ Install one skill globally:
 npx skills add Tbsheff/skills --skill typed-call-stack-planning --global --agent codex --agent claude-code
 ```
 
-Omit `--global` to install into the current project. The Skills CLI uses your Git or GitHub CLI sign-in for private repositories.
+Omit `--global` to install into the current project.
 
 Each folder follows the Agent Skills layout and has a `SKILL.md` entry point.
