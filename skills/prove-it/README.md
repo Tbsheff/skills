@@ -23,7 +23,7 @@ Tested on `abc1234`.
 ```
 
 
-It does not rewrite the PR description, emit checklists, generate a proof dashboard, or wait for CI. If the PR moves while the check is running, the comment still gets posted and says which commit the media came from.
+For a UI-facing change, it requires a visual claim and uses the real app path when that path is reachable. Tests can support that proof but cannot replace the screenshot or video. For backend-only work, it generates a compact diagram from the recorded behavior, code path, and observed result while keeping the runtime receipt as the proof. It does not rewrite the PR description, emit checklists, generate a proof dashboard, or wait for CI. If the PR moves while the check is running, the comment still gets posted and says which commit the media came from.
 
 ## Storage
 

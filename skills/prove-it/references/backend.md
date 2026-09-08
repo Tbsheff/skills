@@ -1,6 +1,12 @@
 # Backend checks
 
-For backend-only work, show the value, response, state change, or trace that matters. Do not generate a picture just to make the comment look visual.
+For backend-only work, record the value, response, state change, or trace that matters. Then generate a small behavior diagram from those recorded facts:
+
+```bash
+"$PROVE_IT" visualize --dir "$PROOF_DIR"
+```
+
+The diagram shows `behavior checked → code path → observed result` for up to three claims. It uses the claim text, code references, capture SHA, and observed values already in the manifest. The command, API call, or state check remains the proof. Do not replace it with the diagram.
 
 ## Focused test or executable example
 

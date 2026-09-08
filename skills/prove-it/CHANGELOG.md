@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.0
+
+- Required every UI-facing proof run to include a browser, screenshot, or video claim.
+- Made the real app route the default visual target and limited component fixtures to components with no reachable route.
+- Blocked text-only passed proof for frontend and mixed changes while allowing an honest `not_proven` visual claim when the app cannot run.
+- Clarified that an interactive demo must show the state before the action, the action, and the result.
+- Added an evidence-backed backend diagram that maps each checked behavior through its code path to the observed result.
+- Made publishing generate the backend diagram when a backend-only run does not already include one.
+
 ## 1.7.0
 
 - Reduced the visible comment to `## QA`, one commit sentence, up to three observations, real media, and at most one important caveat.

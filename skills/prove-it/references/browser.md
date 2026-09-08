@@ -1,6 +1,8 @@
 # Browser checks
 
-Use `agent-browser` for behavior a reviewer can see. Do not wait for CI or restart a good recording because the remote PR head changed.
+Use `agent-browser` for behavior a reviewer can see. The result must let the reviewer see the changed behavior, not only a test result or a mounted fixture. Do not wait for CI or restart a good recording because the remote PR head changed.
+
+Use the real app route when it exists. A component fixture is a fallback for a component with no reachable route, not a shortcut around app startup, auth, or state setup.
 
 ## One session
 
@@ -20,7 +22,7 @@ agent-browser find role button click --name "Save"
 agent-browser wait --text "Saved"
 ```
 
-Find stable roles, labels, text, or test IDs. Reset to a known starting state before capture.
+Find stable roles, labels, text, or test IDs. Set up safe test data, complete the flow once, then reset to a known starting state before capture.
 
 ## Interaction
 
@@ -43,11 +45,11 @@ agent-browser record stop
   --label "Saved state" --role final
 ```
 
-Keep the recording short. The comment already states what happened, so do not write a second caption that repeats it.
+Keep the recording short. It must show the state before the action, the action itself, and the result. The comment already states what happened, so do not write a second caption that repeats it.
 
 ## Static change
 
-Use one final screenshot, or a before/after pair when the comparison matters:
+Use one final screenshot for a visible result with enough context. Use a before/after pair at the same viewport when the comparison matters:
 
 ```bash
 "$PROVE_IT" add --dir "$PROOF_DIR" --claim C1 \

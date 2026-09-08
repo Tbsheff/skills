@@ -177,6 +177,7 @@ raise SystemExit(2)
             "node", "--input-type=module", "-e",
             "import('./index.js').then(m=>{const value=m.add('2','3');console.log('result='+value);if(value!==5)process.exit(1)})",
         )
+        run("visualize", "--dir", str(backend))
         run("render", "--dir", str(backend))
         backend_md = (backend / "proof.md").read_text()
         assert "## QA" in backend_md and "## QA:" not in backend_md, backend_md
@@ -191,8 +192,41 @@ raise SystemExit(2)
         assert "claims proven" not in backend_md.casefold(), backend_md
         assert "proof map" not in backend_md.casefold(), backend_md
         assert "- [x]" not in backend_md.casefold(), backend_md
-        assert json.loads((backend / "attachments.json").read_text())["files"] == []
+        assert json.loads((backend / "attachments.json").read_text())["files"] == ["frontend/backend-behavior.svg"]
+        backend_svg = (backend / "frontend" / "backend-behavior.svg").read_text()
+        assert "Numeric strings are added" in backend_svg and "numerically." in backend_svg, backend_svg
+        assert "index.js:1" in backend_svg, backend_svg
+        assert "result=5" in backend_svg, backend_svg
         assert not (backend / "visual").exists()
+
+        ui_without_visual = root / "ui-without-visual"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(ui_without_visual), "--title", "Visible reviewer state")
+        ui_manifest_path = ui_without_visual / "manifest.json"
+        ui_manifest = json.loads(ui_manifest_path.read_text())
+        ui_manifest["change"]["recommended_proof"] = "mixed"
+        ui_manifest_path.write_text(json.dumps(ui_manifest, indent=2) + "\n")
+        run(
+            "claim", "--dir", str(ui_without_visual), "--text", "The assigned reviewer is visible after save.",
+            "--expected", "The queue shows Jane Reviewer.", "--method", "test", "--code", "index.js:1"
+        )
+        run(
+            "run", "--dir", str(ui_without_visual), "--claim", "C1", "--kind", "test",
+            "--label", "Reviewer state unit test", "--expect-output", "reviewer=Jane Reviewer",
+            "--observed", "The unit test returned reviewer=Jane Reviewer.", "--proves", "--",
+            "node", "-e", "console.log('reviewer=Jane Reviewer')",
+        )
+        missing_visual_claim = run("validate", "--dir", str(ui_without_visual), expect=1)
+        assert "UI-facing change has no visual claim" in missing_visual_claim.stdout
+        run(
+            "claim", "--dir", str(ui_without_visual), "--text", "The save flow is visible in the real app.",
+            "--expected", "A reviewer can see the state before and after save.", "--method", "browser", "--code", "index.js:1"
+        )
+        run(
+            "status", "--dir", str(ui_without_visual), "--claim", "C2", "--status", "not_proven",
+            "--observed", "The real app route could not be started in this environment."
+        )
+        explicit_visual_block = json.loads(run("validate", "--dir", str(ui_without_visual)).stdout)
+        assert explicit_visual_block["status"] == "partial", explicit_visual_block
 
         # Failed and partial runs are plain about what happened.
         failed = root / "failed-proof"
@@ -377,6 +411,25 @@ raise SystemExit(2)
         os.environ.pop("FAKE_GH_HEAD_AFTER_COMMENT", None)
         head_file.unlink()
         os.environ["FAKE_GH_HEAD"] = head
+
+        auto_backend = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Generated backend visual").stdout.strip())
+        run(
+            "claim", "--dir", str(auto_backend), "--text", "Numeric strings are added numerically.",
+            "--expected", "The command prints result=5.", "--method", "test", "--code", "index.js:1"
+        )
+        run(
+            "run", "--dir", str(auto_backend), "--claim", "C1", "--kind", "test",
+            "--label", "Numeric string addition", "--expect-output", "result=5",
+            "--observed", "The command returned result=5.", "--proves", "--",
+            "node", "-e", "console.log('result=5')",
+        )
+        auto_publish_stdout = run("publish", "--dir", str(auto_backend)).stdout
+        auto_publish_result, _ = json.JSONDecoder().raw_decode(auto_publish_stdout)
+        assert auto_publish_result["attachments"] == 1, auto_publish_result
+        auto_backend_body = str(read_comments(comments_file)[-1]["body"])
+        assert "Backend behavior" in auto_backend_body, auto_backend_body
+        assert "github.com/user-attachments/assets/backend-behavior.svg" in auto_backend_body, auto_backend_body
+        assert not auto_backend.exists(), "successful backend publish should remove its temp directory"
 
         # Dirty worktrees and visual claims without media are rejected.
         (repo / "dirty.tmp").write_text("dirty")
