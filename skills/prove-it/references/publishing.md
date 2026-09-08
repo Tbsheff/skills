@@ -1,70 +1,50 @@
-# Publishing proof to an existing PR
+# Post one QA comment
 
-`prove-it` never creates a pull request. The PR must exist before the skill is invoked.
+The capture SHA is fixed when `init` starts. A later PR commit does not cancel the run.
 
-## Durable versus temporary state
+## Comment shape
 
-Temporary evidence lives under `$TMPDIR/prove-it-pr-*` while the run is active. The durable copy is stored by GitHub:
+Keep the visible comment as small as the result allows:
 
-- text proof -> PR body
-- screenshots/video -> GitHub user attachments uploaded by `gh pr edit --attach`
+```markdown
+## QA
 
-Nothing is committed to the feature branch and nothing is stored under `.git` by default.
+Tested on `abc1234`.
 
-## Publish command
+- The reviewer shows up in the queue after save.
+- A fresh read returns `reviewerId=reviewer-test`.
 
-The helper performs the complete publish transaction:
+[video or screenshots]
 
-```bash
-scripts/prove-it publish --dir "$PROOF_DIR"
+<details>
+<summary>What I ran</summary>
+...
+</details>
 ```
 
-Conceptually it runs:
+For a visual-only change, one observation plus before/after screenshots may be enough. For a backend-only change, omit media.
 
-```bash
-cd "$PROOF_DIR"
-gh pr edit <number> \
-  --repo <owner/repo> \
-  --body-file ./pr-body.md \
-  --attach ./frontend/final.png \
-  --attach ./frontend/demo.webm
+Do not add headings such as `Demo`, `Backend`, `Runtime evidence`, `Path I checked`, or `Observed`. Do not repeat a fact in both visible prose and a visible receipt. Commands and receipts belong under `What I ran`.
+
+When the PR moves after capture, say so in one or two plain sentences and still post the result:
+
+```text
+Tested on abc1234. The PR is now def5678.
+I didn't rerun the latest head. review-row.tsx changed afterward.
 ```
 
-The generated Markdown references attachments with local relative paths. GitHub CLI rewrites those references to GitHub-hosted URLs during upload.
-
-## Existing PR body
-
-`publish` fetches the current PR body with `gh pr view`. It replaces only its own `<!-- prove-it:start --> ... <!-- prove-it:end -->` block and preserves the rest of the PR description, including any human-authored `## Proof` section.
-
-## Freshness gate
-
-Immediately before `gh pr edit`, publication fails if:
-
-- GitHub's current PR head SHA differs from the SHA recorded at init
-- local `HEAD` differs from that SHA
-- the local worktree is dirty
-- evidence validation finds corruption, missing files, or likely secrets
-
-A proof must describe the exact revision a reviewer sees.
-
-## Cleanup
-
-Successful publication deletes the temporary proof directory automatically.
-
-Use:
+## Upload
 
 ```bash
-scripts/prove-it publish --dir "$PROOF_DIR" --keep
+"$PROVE_IT" publish --dir "$PROOF_DIR"
 ```
 
-only for debugging. If an upload fails, the temp directory remains so it can be retried; remove it with:
+The helper uses `gh pr comment --body-file ... --attach ...`. Each invocation creates one comment, verifies that GitHub replaced local media paths, refreshes the commit sentence if the PR moved during upload, and deletes the temp directory.
+
+CI is separate. Do not poll or wait for it.
+
+Use `publish --keep` only while debugging. Remove a retained run with:
 
 ```bash
-scripts/prove-it cleanup --dir "$PROOF_DIR"
+"$PROVE_IT" cleanup --dir "$PROOF_DIR"
 ```
-
-New runs prune abandoned Prove It temp directories older than 24 hours.
-
-## Permissions and CLI support
-
-`gh pr edit --attach` requires a GitHub CLI version that supports attachment upload and GitHub permissions sufficient to edit the PR. `scripts/prove-it doctor` checks for the flag before a run is published.

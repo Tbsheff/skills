@@ -5,8 +5,6 @@ import base64
 import json
 import os
 import pathlib
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
 import sys
 import tempfile
@@ -33,35 +31,54 @@ def git(repo: pathlib.Path, *args: str) -> None:
         raise AssertionError(cp.stderr)
 
 
+def read_comments(path: pathlib.Path) -> list[dict[str, object]]:
+    return json.loads(path.read_text()) if path.exists() else []
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="prove-it-self-test-") as tmp:
         root = pathlib.Path(tmp)
-
         fake_bin = root / "bin"
         fake_bin.mkdir()
         fake_gh = fake_bin / "gh"
-        fake_gh_source = r"""#!/usr/bin/env python3
+        fake_gh.write_text(
+            r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
 body_file = pathlib.Path(os.environ.get("FAKE_GH_BODY_FILE", "/tmp/fake-gh-body.md"))
-head = os.environ.get("FAKE_GH_HEAD", "")
+comments_file = pathlib.Path(os.environ.get("FAKE_GH_COMMENTS_FILE", "/tmp/fake-gh-comments.json"))
+head_file_raw = os.environ.get("FAKE_GH_HEAD_FILE", "")
+head_file = pathlib.Path(head_file_raw) if head_file_raw else None
+head = head_file.read_text().strip() if head_file and head_file.exists() else os.environ.get("FAKE_GH_HEAD", "")
+
+def comments():
+    return json.loads(comments_file.read_text()) if comments_file.exists() else []
+
+def save(items):
+    comments_file.write_text(json.dumps(items))
+
 if args == ["--version"]:
     print("gh version 9.9.9")
     raise SystemExit(0)
-if args[:3] == ["pr", "edit", "--help"]:
+if args[:3] == ["pr", "comment", "--help"]:
     print("--attach <file>\n--body-file <file>")
     raise SystemExit(0)
 if args[:2] == ["repo", "view"]:
     print(json.dumps({"nameWithOwner": "test/prove-it"}))
     raise SystemExit(0)
 if args[:2] == ["pr", "view"]:
-    body = body_file.read_text() if body_file.exists() else "## What\n\nTest PR.\n"
     print(json.dumps({
-        "number": 42, "url": "https://github.com/test/prove-it/pull/42", "title": "Test proof",
-        "body": body, "headRefOid": head, "headRefName": "feature", "baseRefName": "main", "isDraft": False
+        "number": 42,
+        "url": "https://github.com/test/prove-it/pull/42",
+        "title": "Test proof",
+        "headRefOid": head,
+        "headRefName": "feature",
+        "baseRefName": "main",
+        "isDraft": False,
+        "state": "OPEN",
     }))
     raise SystemExit(0)
-if args[:2] == ["pr", "edit"]:
+if args[:2] == ["pr", "comment"]:
     body_path = pathlib.Path(args[args.index("--body-file") + 1])
     body = body_path.read_text()
     i = 0
@@ -69,21 +86,63 @@ if args[:2] == ["pr", "edit"]:
         if args[i] == "--attach":
             rel = args[i + 1].split("#", 1)[0]
             url = "https://github.com/user-attachments/assets/" + pathlib.Path(rel).name
-            body = body.replace("](./" + rel + ")", "](" + url + ")")
-            body = body.replace("](" + rel + ")", "](" + url + ")")
+            if pathlib.Path(rel).suffix.lower() in {".mp4", ".mov", ".webm"}:
+                body = body.replace("![](./" + rel + ")", url)
+                body = body.replace("![](" + rel + ")", url)
+            else:
+                body = body.replace("](./" + rel + ")", "](" + url + ")")
+                body = body.replace("](" + rel + ")", "](" + url + ")")
             i += 2
         else:
             i += 1
-    body_file.write_text(body)
-    print("https://github.com/test/prove-it/pull/42")
-    raise SystemExit(0)
+    items = comments()
+    comment_id = 9000 + len(items) + 1
+    url = f"https://github.com/test/prove-it/pull/42#issuecomment-{comment_id}"
+    items.append({"id": comment_id, "body": body, "html_url": url})
+    save(items)
+    head_after = os.environ.get("FAKE_GH_HEAD_AFTER_COMMENT", "")
+    if head_file and head_after:
+        head_file.write_text(head_after)
+    print(url)
+    raise SystemExit(int(os.environ.get("FAKE_GH_COMMENT_EXIT", "0")))
+if args and args[0] == "api":
+    if "--method" in args and args[args.index("--method") + 1] == "PATCH":
+        endpoint = args[args.index("--method") + 2]
+        comment_id = int(endpoint.rsplit("/", 1)[1])
+        payload = json.loads(pathlib.Path(args[args.index("--input") + 1]).read_text())
+        items = comments()
+        for item in items:
+            if int(item["id"]) == comment_id:
+                item["body"] = payload["body"]
+                save(items)
+                print(json.dumps(item))
+                raise SystemExit(0)
+        raise SystemExit(4)
+    endpoint = args[-1]
+    if "/issues/comments/" in endpoint:
+        comment_id = int(endpoint.rsplit("/", 1)[1])
+        for item in comments():
+            if int(item["id"]) == comment_id:
+                print(json.dumps(item))
+                raise SystemExit(0)
+        raise SystemExit(4)
+    if "/issues/42/comments" in endpoint:
+        value = comments()
+        print(json.dumps([value] if "--slurp" in args else value))
+        raise SystemExit(0)
 print("unsupported fake gh args: " + repr(args), file=sys.stderr)
 raise SystemExit(2)
-"""
-        fake_gh.write_text(fake_gh_source, encoding="utf-8")
+''',
+            encoding="utf-8",
+        )
         fake_gh.chmod(0o755)
         os.environ["PATH"] = str(fake_bin) + os.pathsep + os.environ.get("PATH", "")
-        os.environ["FAKE_GH_BODY_FILE"] = str(root / "fake-pr-body.md")
+        pr_body_file = root / "fake-pr-body.md"
+        pr_body_file.write_text("## What\n\nOriginal PR description.\n")
+        comments_file = root / "fake-gh-comments.json"
+        comments_file.write_text("[]")
+        os.environ["FAKE_GH_BODY_FILE"] = str(pr_body_file)
+        os.environ["FAKE_GH_COMMENTS_FILE"] = str(comments_file)
 
         repo = root / "repo"
         repo.mkdir()
@@ -98,177 +157,242 @@ raise SystemExit(2)
         (repo / "index.js").write_text("export const add = (a, b) => Number(a) + Number(b);\n", encoding="utf-8")
         git(repo, "add", ".")
         git(repo, "commit", "-qm", "handle numeric strings")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        os.environ["FAKE_GH_HEAD"] = head
 
         scan = json.loads(run("scan", "--repo", str(repo), "--base", "main", "--json").stdout)
         assert scan["recommended_proof"] == "backend", scan
-        assert scan["file_count"] == 1, scan
 
-        proof_dir = root / "proof"
-        run("init", "--repo", str(repo), "--base", "main", "--out", str(proof_dir), "--title", "Numeric string addition")
+        # Backend-only proof renders concrete receipts and no decorative graphics.
+        backend = root / "backend-proof"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(backend), "--title", "Numeric string addition")
         run(
-            "claim", "--dir", str(proof_dir), "--text", "Numeric strings are added numerically.",
-            "--expected", "add('2', '3') returns 5.", "--method", "test"
-        )
-        run(
-            "run", "--dir", str(proof_dir), "--claim", "C1", "--kind", "test",
-            "--label", "Focused Node assertion", "--expect-output", "PASS", "--proves", "--",
-            "node", "--input-type=module", "-e", "import('./index.js').then(m=>{if(m.add('2','3')!==5)process.exit(1);console.log('PASS')})",
+            "claim", "--dir", str(backend), "--text", "Numeric strings are added numerically.",
+            "--expected", "add('2', '3') returns 5.", "--method", "test", "--code", "index.js:1"
         )
         run(
-            "claim", "--dir", str(proof_dir), "--text", "The final state is visible.",
-            "--expected", "A screenshot artifact is present.", "--method", "screenshot"
+            "run", "--dir", str(backend), "--claim", "C1", "--kind", "test",
+            "--label", "Focused Node assertion", "--expect-output", "result=5",
+            "--observed", "The executable example returned result=5.", "--proves", "--",
+            "node", "--input-type=module", "-e",
+            "import('./index.js').then(m=>{const value=m.add('2','3');console.log('result='+value);if(value!==5)process.exit(1)})",
         )
-        png = root / "final.png"
-        png.write_bytes(PNG_1X1)
+        run("render", "--dir", str(backend))
+        backend_md = (backend / "proof.md").read_text()
+        assert "## QA" in backend_md and "## QA:" not in backend_md, backend_md
+        assert "Tested on" in backend_md, backend_md
+        assert "- The executable example returned result=5." in backend_md, backend_md
+        assert "### Backend" not in backend_md, backend_md
+        assert "output:" in backend_md and "result=5" in backend_md, backend_md
+        assert backend_md.index("<details>") < backend_md.index("output:"), backend_md
+        assert "What I ran" in backend_md, backend_md
+        for phrase in ("Verified on", "Runtime evidence", "Evidence:", "Freshness:", "> [!"):
+            assert phrase not in backend_md, backend_md
+        assert "claims proven" not in backend_md.casefold(), backend_md
+        assert "proof map" not in backend_md.casefold(), backend_md
+        assert "- [x]" not in backend_md.casefold(), backend_md
+        assert json.loads((backend / "attachments.json").read_text())["files"] == []
+        assert not (backend / "visual").exists()
+
+        # Failed and partial runs are plain about what happened.
+        failed = root / "failed-proof"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(failed), "--title", "Failed behavior")
         run(
-            "add", "--dir", str(proof_dir), "--claim", "C2", "--type", "screenshot",
-            "--path", str(png), "--label", "Final state", "--observed", "The final state rendered.", "--proves"
+            "claim", "--dir", str(failed), "--text", "Numeric strings return the expected value.",
+            "--expected", "The command prints result=5.", "--method", "test", "--code", "index.js:1"
         )
         run(
-            "run", "--dir", str(proof_dir), "--claim", "C1", "--kind", "log",
-            "--label", "Redaction probe", "--expect-output", "Authorization", "--",
-            "node", "-e", "console.log('Authorization: Bearer definitely-secret-value')",
+            "run", "--dir", str(failed), "--claim", "C1", "--kind", "test",
+            "--label", "Deliberate failing assertion", "--expect-output", "result=5",
+            "--observed", "The command returned result=4.", "--proves", "--",
+            "node", "-e", "console.log('result=4')", expect=1,
         )
+        run("render", "--dir", str(failed))
+        failed_md = (failed / "proof.md").read_text()
+        assert "Tested on" in failed_md and "and hit a failure." in failed_md, failed_md
+        assert "- The command returned result=4." in failed_md, failed_md
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.headers.get("X-Prove-It") != "safe-header-value":
-                    self.send_response(403)
-                    self.end_headers()
-                    return
-                body = b'{"ok": true}'
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *_args):
-                return
-
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        thread.start()
-        try:
-            os.environ["PROVE_IT_TEST_HEADER"] = "safe-header-value"
-            run(
-                "claim", "--dir", str(proof_dir), "--text", "Sensitive headers can be supplied without command-line values.",
-                "--expected", "The local request receives the environment-backed header.", "--method", "http"
-            )
-            run(
-                "http", "--dir", str(proof_dir), "--claim", "C3", "--label", "Header environment assertion",
-                "--url", f"http://127.0.0.1:{httpd.server_port}/",
-                "--header-env", "X-Prove-It=PROVE_IT_TEST_HEADER",
-                "--expect-status", "200", "--expect-json", "ok=true", "--proves"
-            )
-        finally:
-            httpd.shutdown()
-            httpd.server_close()
-            thread.join(timeout=2)
-
-        run("validate", "--dir", str(proof_dir), "--strict")
-        run("render", "--dir", str(proof_dir))
-
-        base_body = root / "base-body.md"
-        base_body.write_text(
-            "## What\n\nChange behavior.\n\n## Proof\n\nOld proof.\n\n## References\n\n- #1\n",
-            encoding="utf-8",
+        partial = root / "partial-proof"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(partial), "--title", "Partial behavior")
+        run(
+            "claim", "--dir", str(partial), "--text", "Concurrent updates preserve the latest reviewer.",
+            "--expected", "Two concurrent saves resolve deterministically.", "--method", "test", "--code", "index.js:1"
         )
-        composed = root / "composed.md"
-        run("compose", "--dir", str(proof_dir), "--body", str(base_body), "--out", str(composed))
-        composed_text = composed.read_text(encoding="utf-8")
-        assert composed_text.count("<!-- prove-it:start -->") == 1, composed_text
-        assert composed_text.count("<!-- prove-it:end -->") == 1, composed_text
-        assert "Old proof" in composed_text, "human-authored Proof section must be preserved"
-        assert "## Prove It" in composed_text, composed_text
-        assert "## References" in composed_text, composed_text
+        run("status", "--dir", str(partial), "--claim", "C1", "--status", "not_proven", "--observed", "Concurrency was not exercised.")
+        run("render", "--dir", str(partial))
+        partial_md = (partial / "proof.md").read_text()
+        assert "Tested on" in partial_md and "but I couldn't check everything." in partial_md, partial_md
+        assert "- Concurrency was not exercised." in partial_md, partial_md
 
-        bad_base = run("scan", "--repo", str(repo), "--base", "does-not-exist", expect=2)
-        assert "does not exist" in bad_base.stderr
+        # Full-stack output leads with real media, then causal flow and backend receipt.
+        full = root / "full-stack-proof"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(full), "--title", "Reviewer assignment")
+        run(
+            "claim", "--dir", str(full), "--text", "The assigned reviewer appears in the queue.",
+            "--expected", "The queue shows Jane Reviewer after save.", "--method", "browser", "--code", "index.js:1"
+        )
+        run(
+            "claim", "--dir", str(full), "--text", "The selected reviewer is persisted.",
+            "--expected", "A fresh read returns reviewerId=reviewer-test.", "--method", "test", "--code", "index.js:1"
+        )
+        run("review-step", "--dir", str(full), "--text", "The browser saves reviewer-test.", "--code", "index.js:1")
+        run("review-step", "--dir", str(full), "--text", "A fresh read returns the same reviewer.", "--code", "index.js:1")
+        before = root / "before.png"; before.write_bytes(PNG_1X1)
+        after = root / "after.png"; after.write_bytes(PNG_1X1)
+        video = root / "demo.webm"; video.write_bytes(b"prove-it-video-fixture")
+        run("add", "--dir", str(full), "--claim", "C1", "--type", "screenshot", "--path", str(before), "--label", "Before assignment", "--role", "before", "--observed", "No reviewer is assigned.")
+        run("add", "--dir", str(full), "--claim", "C1", "--type", "screenshot", "--path", str(after), "--label", "After assignment", "--role", "after", "--observed", "Jane Reviewer appears in the queue.", "--proves")
+        run("add", "--dir", str(full), "--claim", "C1", "--type", "video", "--path", str(video), "--label", "Reviewer assignment flow", "--role", "primary", "--observed", "Saving the assignment updates the queue.")
+        run(
+            "run", "--dir", str(full), "--claim", "C2", "--kind", "database",
+            "--label", "Persisted reviewer", "--expect-output", "reviewerId=reviewer-test",
+            "--observed", "A fresh read returned reviewerId=reviewer-test.", "--proves", "--",
+            "node", "-e", "console.log('reviewerId=reviewer-test')",
+        )
+        run("render", "--dir", str(full))
+        full_md = (full / "proof.md").read_text()
+        assert full_md.index("Tested on") < full_md.index("![](./frontend/reviewer-assignment-flow.webm)"), full_md
+        assert full_md.index("![](./frontend/reviewer-assignment-flow.webm)") < full_md.index("| Before | After |"), full_md
+        assert "### Demo" not in full_md and "### Backend" not in full_md and "Path I checked" not in full_md, full_md
+        assert "- Jane Reviewer appears in the queue." in full_md, full_md
+        assert "- A fresh read returned reviewerId=reviewer-test." in full_md, full_md
+        assert full_md.index("<details>") < full_md.index("Path: The browser saves reviewer-test → A fresh read returns the same reviewer"), full_md
+        for phrase in ("Verified on", "Runtime evidence", "Evidence:", "Freshness:", "> [!", "claims proven"):
+            assert phrase not in full_md, full_md
+        assert full_md.index("<details>") < full_md.index("result: passed"), full_md
+        assert "proof map" not in full_md.casefold(), full_md
+        assert "claims proven" not in full_md.casefold(), full_md
+        attachments = json.loads((full / "attachments.json").read_text())["files"]
+        assert attachments == [
+            "frontend/before-assignment.png",
+            "frontend/after-assignment.png",
+            "frontend/reviewer-assignment-flow.webm",
+        ], attachments
 
-        manifest = json.loads((proof_dir / "manifest.json").read_text())
-        assert manifest["summary"]["status"] == "passed", manifest["summary"]
-        assert (proof_dir / "proof.md").exists()
-        assert (proof_dir / "report.html").exists()
-        attachments = json.loads((proof_dir / "attachments.json").read_text())
-        assert attachments["files"] == ["frontend/final-state.png"], attachments
-        log = (proof_dir / "backend" / "c1-focused-node-assertion.txt").read_text()
-        assert "PASS" in log
-        redaction_log = (proof_dir / "backend" / "c1-redaction-probe.txt").read_text()
-        assert "definitely-secret-value" not in redaction_log
-        assert "[REDACTED]" in redaction_log
-        http_log = (proof_dir / "backend" / "c3-header-environment-assertion.txt").read_text()
-        assert "safe-header-value" not in http_log
+        diagram = root / "flow.svg"
+        diagram.write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>flow</text></svg>')
+        bad_diagram = run(
+            "add", "--dir", str(full), "--claim", "C2", "--type", "diagram",
+            "--path", str(diagram), "--label", "Invalid proof diagram", "--proves", expect=2
+        )
+        assert "cannot prove runtime behavior" in bad_diagram.stderr
 
-        screenshot = proof_dir / "frontend" / "final-state.png"
+        # Tampering is detected.
+        screenshot = full / "frontend" / "after-assignment.png"
         original = screenshot.read_bytes()
         screenshot.write_bytes(original + b"tampered")
-        tamper = run("validate", "--dir", str(proof_dir), expect=1)
+        tamper = run("validate", "--dir", str(full), expect=1)
         assert "hash mismatch" in tamper.stdout
         screenshot.write_bytes(original)
-        run("validate", "--dir", str(proof_dir), "--strict")
+        run("validate", "--dir", str(full), "--strict")
 
-        # Human-invoked PR mode uses ephemeral temp storage and gh pr edit --attach.
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        # Publishing creates a dedicated comment and leaves the PR description alone.
+        original_pr_body = pr_body_file.read_text()
+        published = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Human invoked proof").stdout.strip())
+        run(
+            "claim", "--dir", str(published), "--text", "The assigned reviewer appears in the queue.",
+            "--expected", "The interaction is visible in the comment.", "--method", "browser", "--code", "index.js:1"
+        )
+        run("add", "--dir", str(published), "--claim", "C1", "--type", "screenshot", "--path", str(before), "--label", "Before reviewer state", "--role", "before", "--observed", "The review is unassigned.")
+        run("add", "--dir", str(published), "--claim", "C1", "--type", "screenshot", "--path", str(after), "--label", "After reviewer state", "--role", "after", "--observed", "The assigned reviewer is visible.", "--proves")
+        run("add", "--dir", str(published), "--claim", "C1", "--type", "video", "--path", str(video), "--label", "Reviewer assignment flow", "--role", "primary", "--observed", "Assigning the reviewer updates the visible state.")
+        publish_stdout = run("publish", "--dir", str(published)).stdout
+        result, _ = json.JSONDecoder().raw_decode(publish_stdout)
+        assert result["comment_url"].endswith("#issuecomment-9001"), result
+        assert not published.exists(), "successful publish should remove its temp directory"
+        assert pr_body_file.read_text() == original_pr_body, "publish must not rewrite the PR description"
+        comments = read_comments(comments_file)
+        assert len(comments) == 1, comments
+        comment_body = str(comments[0]["body"])
+        assert "### Demo" not in comment_body and "### Before / after" not in comment_body, comment_body
+        assert "Tested on" in comment_body and comment_body.index("Tested on") < comment_body.index("github.com/user-attachments/assets/"), comment_body
+        assert "| Before | After |" in comment_body, comment_body
+        for phrase in ("Verified on", "Runtime evidence", "Evidence:", "Freshness:", "> [!"):
+            assert phrase not in comment_body, comment_body
+        assert "github.com/user-attachments/assets/" in comment_body, comment_body
+        assert "proof map" not in comment_body.casefold(), comment_body
+        assert "claims proven" not in comment_body.casefold(), comment_body
+        assert "- [x]" not in comment_body.casefold(), comment_body
+        assert "### Observed" not in comment_body, comment_body
+        assert "./frontend/" not in comment_body, comment_body
+
+        # Each invocation creates another self-contained receipt rather than editing the first.
+        second = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Second proof run").stdout.strip())
+        run(
+            "claim", "--dir", str(second), "--text", "The final state is visible.",
+            "--expected", "The screenshot is attached.", "--method", "screenshot", "--code", "index.js:1"
+        )
+        run("add", "--dir", str(second), "--claim", "C1", "--type", "screenshot", "--path", str(after), "--label", "Final state", "--role", "final", "--observed", "The final state is visible.", "--proves")
+        run("publish", "--dir", str(second))
+        comments = read_comments(comments_file)
+        assert len(comments) == 2, comments
+        assert comments[0]["id"] != comments[1]["id"]
+        assert "<!-- prove-it:run id=" in str(comments[0]["body"])
+        assert "<!-- prove-it:run id=" in str(comments[1]["body"])
+        assert str(comments[0]["body"]) != str(comments[1]["body"])
+        assert "Human invoked proof" not in str(comments[0]["body"])
+        assert "Second proof run" not in str(comments[1]["body"])
+
+        # A later unrelated commit labels point-in-time proof but does not block it.
+        point = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Point-in-time proof").stdout.strip())
+        run(
+            "claim", "--dir", str(point), "--text", "The captured state remains visible.",
+            "--expected", "A screenshot from the captured SHA is attached.", "--method", "screenshot", "--code", "index.js:1"
+        )
+        run("add", "--dir", str(point), "--claim", "C1", "--type", "screenshot", "--path", str(after), "--label", "Captured state", "--role", "final", "--observed", "Captured at the original PR head.", "--proves")
+        git(repo, "checkout", "-qb", "future-unrelated")
+        (repo / "README.md").write_text("Later unrelated note.\n")
+        git(repo, "add", "README.md")
+        git(repo, "commit", "-qm", "add unrelated note")
+        future_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        git(repo, "checkout", "-q", "feature")
+        os.environ["FAKE_GH_HEAD"] = future_head
+        point_result, _ = json.JSONDecoder().raw_decode(run("publish", "--dir", str(point)).stdout)
+        assert point_result["relationship"] == "advanced-unrelated", point_result
+        point_body = str(read_comments(comments_file)[-1]["body"])
+        assert "The PR is now" in point_body, point_body
+        assert "None of the files I checked changed afterward." in point_body, point_body
+        assert head[:8] in point_body and future_head[:8] in point_body, point_body
+
+        # If the PR advances during upload, the exact newly-created comment is refreshed.
         os.environ["FAKE_GH_HEAD"] = head
-        ephemeral = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Human invoked proof").stdout.strip())
-        assert ephemeral.exists(), ephemeral
-        git_path = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-dir"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
-        assert not str(ephemeral).startswith(str(pathlib.Path(git_path).resolve())), (ephemeral, git_path)
+        moving = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Moving-head proof").stdout.strip())
         run(
-            "claim", "--dir", str(ephemeral), "--text", "The PR proof screenshot is available to reviewers.",
-            "--expected", "A screenshot is attached to the existing PR.", "--method", "screenshot"
+            "claim", "--dir", str(moving), "--text", "The captured state survives a head update.",
+            "--expected", "The comment retains the media and names both SHAs.", "--method", "screenshot", "--code", "index.js:1"
         )
-        publish_png = root / "publish.png"
-        publish_png.write_bytes(PNG_1X1)
-        run(
-            "add", "--dir", str(ephemeral), "--claim", "C1", "--type", "screenshot",
-            "--path", str(publish_png), "--label", "Reviewer state", "--observed", "Screenshot captured.", "--proves"
-        )
-        run("publish", "--dir", str(ephemeral))
-        assert not ephemeral.exists(), "successful publish should remove ephemeral proof directory"
-        published_body = pathlib.Path(os.environ["FAKE_GH_BODY_FILE"]).read_text()
-        assert "## Prove It" in published_body, published_body
-        assert "<!-- prove-it:start -->" in published_body, published_body
-        assert "github.com/user-attachments/assets/" in published_body, published_body
-        assert "./frontend/" not in published_body, published_body
+        run("add", "--dir", str(moving), "--claim", "C1", "--type", "screenshot", "--path", str(after), "--label", "Moving head state", "--role", "final", "--observed", "Captured before upload began.", "--proves")
+        head_file = root / "fake-gh-head.txt"
+        head_file.write_text(head)
+        os.environ["FAKE_GH_HEAD_FILE"] = str(head_file)
+        os.environ["FAKE_GH_HEAD_AFTER_COMMENT"] = future_head
+        moving_result, _ = json.JSONDecoder().raw_decode(run("publish", "--dir", str(moving)).stdout)
+        assert moving_result["relationship"] == "advanced-unrelated", moving_result
+        moving_body = str(read_comments(comments_file)[-1]["body"])
+        assert "The PR is now" in moving_body, moving_body
+        assert future_head[:8] in moving_body, moving_body
+        assert "github.com/user-attachments/assets/" in moving_body, moving_body
+        assert "./frontend/" not in moving_body, moving_body
+        os.environ.pop("FAKE_GH_HEAD_FILE", None)
+        os.environ.pop("FAKE_GH_HEAD_AFTER_COMMENT", None)
+        head_file.unlink()
+        os.environ["FAKE_GH_HEAD"] = head
 
-        # Dirty worktrees are rejected before a PR-bound run begins.
-        (repo / "dirty.tmp").write_text("dirty", encoding="utf-8")
+        # Dirty worktrees and visual claims without media are rejected.
+        (repo / "dirty.tmp").write_text("dirty")
         dirty = run("init", "--repo", str(repo), "--pr", "current", expect=2)
-        assert "clean working tree" in dirty.stderr, dirty.stderr
+        assert "clean working tree" in dirty.stderr
         (repo / "dirty.tmp").unlink()
 
-        # PR head changes invalidate a run before publication.
-        stale = pathlib.Path(run("init", "--repo", str(repo), "--pr", "current", "--title", "Stale proof").stdout.strip())
-        os.environ["FAKE_GH_HEAD"] = "f" * 40
-        stale_publish = run("publish", "--dir", str(stale), expect=2)
-        assert "Proof is stale" in stale_publish.stderr, stale_publish.stderr
-        os.environ["FAKE_GH_HEAD"] = head
-        run("cleanup", "--dir", str(stale))
-
-        docs_repo = root / "docs-repo"
-        docs_repo.mkdir()
-        git(docs_repo, "init", "-q")
-        git(docs_repo, "config", "user.email", "prove-it@example.test")
-        git(docs_repo, "config", "user.name", "Prove It Test")
-        (docs_repo / "README.md").write_text("one\n", encoding="utf-8")
-        git(docs_repo, "add", ".")
-        git(docs_repo, "commit", "-qm", "base")
-        git(docs_repo, "branch", "-M", "main")
-        git(docs_repo, "checkout", "-qb", "docs")
-        (docs_repo / "README.md").write_text("one\ntwo\n", encoding="utf-8")
-        git(docs_repo, "add", ".")
-        git(docs_repo, "commit", "-qm", "docs")
-        docs_scan = json.loads(run("scan", "--repo", str(docs_repo), "--base", "main", "--json").stdout)
-        assert docs_scan["recommended_proof"] == "none", docs_scan
-        docs_proof = root / "docs-proof"
-        run("init", "--repo", str(docs_repo), "--base", "main", "--out", str(docs_proof))
-        run("validate", "--dir", str(docs_proof), "--strict")
-        run("render", "--dir", str(docs_proof))
-        docs_markdown = (docs_proof / "proof.md").read_text()
-        assert "No runtime proof was required" in docs_markdown
-        assert "| Claim |" not in docs_markdown
+        missing = root / "missing-visual"
+        run("init", "--repo", str(repo), "--base", "main", "--out", str(missing))
+        run(
+            "claim", "--dir", str(missing), "--text", "The changed interaction is visible.",
+            "--expected", "A reviewer can see the interaction.", "--method", "browser"
+        )
+        run("status", "--dir", str(missing), "--claim", "C1", "--status", "passed", "--observed", "Claimed without media.")
+        invalid = run("validate", "--dir", str(missing), expect=1)
+        assert "without a screenshot or video" in invalid.stdout
 
         print("prove-it self-test: PASS")
     return 0

@@ -5,6 +5,7 @@
     "max_commands": 3,
     "max_screenshots": 2,
     "max_videos": 1,
+    "max_diagrams": 1,
     "max_video_seconds": 30
   },
   "app": {

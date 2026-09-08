@@ -4,12 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import contextlib
 import datetime as dt
-import fnmatch
 import hashlib
-import html
 import io
 import json
 import os
@@ -27,14 +24,16 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable, Sequence
 
-TOOL_VERSION = "1.1.0"
-SCHEMA_VERSION = 1
+TOOL_VERSION = "1.5.0"
+SCHEMA_VERSION = 3
+TEMP_RUN_MAX_AGE_HOURS = 1.0
 
 DEFAULT_BUDGETS = {
     "max_claims": 3,
     "max_commands": 3,
     "max_screenshots": 2,
     "max_videos": 1,
+    "max_diagrams": 1,
     "max_video_seconds": 30.0,
 }
 
@@ -43,11 +42,14 @@ EXPANDED_BUDGETS = {
     "max_commands": 8,
     "max_screenshots": 5,
     "max_videos": 2,
+    "max_diagrams": 2,
     "max_video_seconds": 90.0,
 }
 
 TEXT_EVIDENCE_TYPES = {"command", "test", "http", "database", "log", "console", "errors", "file"}
-MEDIA_EVIDENCE_TYPES = {"screenshot", "video"}
+IMAGE_EVIDENCE_TYPES = {"screenshot", "diagram"}
+VIDEO_EVIDENCE_TYPES = {"video"}
+MEDIA_EVIDENCE_TYPES = IMAGE_EVIDENCE_TYPES | VIDEO_EVIDENCE_TYPES
 ALL_EVIDENCE_TYPES = TEXT_EVIDENCE_TYPES | MEDIA_EVIDENCE_TYPES | {"trace", "har"}
 
 SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -98,6 +100,53 @@ def truncate(text: str, limit: int = 200_000) -> tuple[str, bool]:
 def slug(value: str, fallback: str = "evidence") -> str:
     value = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip()).strip("-").lower()
     return (value or fallback)[:72]
+
+
+def parse_code_ref(value: str) -> tuple[str, int | None, int | None]:
+    """Parse repo-relative path, path:start-end, or path#Lstart-Lend."""
+    raw = value.strip()
+    if not raw:
+        raise RuntimeError("Code reference cannot be empty")
+
+    path_text = raw
+    start: int | None = None
+    end: int | None = None
+    hash_match = re.fullmatch(r"(.+?)#L(\d+)(?:-L(\d+))?", raw)
+    colon_match = re.fullmatch(r"(.+?):(\d+)(?:-(\d+))?", raw)
+    if hash_match:
+        path_text = hash_match.group(1)
+        start = int(hash_match.group(2))
+        end = int(hash_match.group(3) or hash_match.group(2))
+    elif colon_match:
+        path_text = colon_match.group(1)
+        start = int(colon_match.group(2))
+        end = int(colon_match.group(3) or colon_match.group(2))
+
+    normalized = pathlib.PurePosixPath(path_text.replace("\\", "/"))
+    if normalized.is_absolute() or ".." in normalized.parts or str(normalized) in {"", "."}:
+        raise RuntimeError(f"Code reference must be a repo-relative path: {value}")
+    if start is not None and (start < 1 or end is None or end < start):
+        raise RuntimeError(f"Invalid line range in code reference: {value}")
+    return normalized.as_posix(), start, end
+
+
+def normalize_code_ref(value: str) -> str:
+    path, start, end = parse_code_ref(value)
+    if start is None:
+        return path
+    return f"{path}:{start}" if start == end else f"{path}:{start}-{end}"
+
+
+def add_proof_scope(manifest: dict[str, Any], refs: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    scope = manifest.setdefault("proof_scope", {}).setdefault("files", [])
+    for value in refs:
+        ref = normalize_code_ref(value)
+        normalized.append(ref)
+        path, _, _ = parse_code_ref(ref)
+        if path not in scope:
+            scope.append(path)
+    return normalized
 
 
 def shell_join(argv: Sequence[str]) -> str:
@@ -482,7 +531,7 @@ def claim_by_id(manifest: dict[str, Any], claim_id: str) -> dict[str, Any]:
     raise RuntimeError(f"Unknown claim: {claim_id}")
 
 
-def prune_old_temp_runs(max_age_hours: float = 24.0) -> None:
+def prune_old_temp_runs(max_age_hours: float = TEMP_RUN_MAX_AGE_HOURS) -> None:
     """Best-effort cleanup of abandoned Prove It temp runs."""
     root = pathlib.Path(tempfile.gettempdir())
     cutoff = time.time() - max_age_hours * 3600
@@ -528,7 +577,7 @@ def resolve_pr(repo: pathlib.Path, selector: str | None = None) -> dict[str, Any
     args = ["pr", "view"]
     if selector and selector != "current":
         args.append(str(selector))
-    args.extend(["--json", "number,url,title,body,headRefOid,headRefName,baseRefName,isDraft"])
+    args.extend(["--json", "number,url,title,headRefOid,headRefName,baseRefName,isDraft,state"])
     pr = gh_json(repo, args)
     repo_info = gh_json(repo, ["repo", "view", "--json", "nameWithOwner"])
     local_repo = str(repo_info.get("nameWithOwner") or "")
@@ -540,6 +589,95 @@ def resolve_pr(repo: pathlib.Path, selector: str | None = None) -> dict[str, Any
         raise RuntimeError(f"PR {pr_url} belongs to {url_repo}, but the current repository is {local_repo}")
     pr["repo"] = local_repo or url_repo
     return pr
+
+
+def manifest_capture_sha(manifest: dict[str, Any]) -> str:
+    target = manifest.get("target_pr") or {}
+    return str(
+        manifest.get("capture", {}).get("sha")
+        or target.get("headRefOid")
+        or manifest.get("change", {}).get("head")
+        or ""
+    )
+
+
+def proof_scope_files(manifest: dict[str, Any]) -> set[str]:
+    explicit = manifest.get("proof_scope", {}).get("files", [])
+    files = {str(path) for path in explicit if isinstance(path, str) and path}
+    if files:
+        return files
+    return {
+        str(item.get("path"))
+        for item in manifest.get("change", {}).get("files", [])
+        if isinstance(item, dict) and item.get("path")
+    }
+
+
+def commit_exists(repo: pathlib.Path, sha: str) -> bool:
+    if not sha:
+        return False
+    return run_capture(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=repo, timeout=10).returncode == 0
+
+
+def fetch_pr_head(repo: pathlib.Path, pr_number: int, sha: str) -> bool:
+    if commit_exists(repo, sha):
+        return True
+    attempts = [
+        ["git", "fetch", "--quiet", "--no-tags", "origin", f"pull/{pr_number}/head"],
+        ["git", "fetch", "--quiet", "--no-tags", "origin", sha],
+    ]
+    for command in attempts:
+        cp = run_capture(command, cwd=repo, timeout=60)
+        if cp.returncode == 0 and commit_exists(repo, sha):
+            return True
+    return False
+
+
+def classify_pr_relationship(
+    repo: pathlib.Path,
+    manifest: dict[str, Any],
+    current_pr: dict[str, Any],
+) -> dict[str, Any]:
+    capture_sha = manifest_capture_sha(manifest)
+    current_sha = str(current_pr.get("headRefOid") or "")
+    result: dict[str, Any] = {
+        "kind": "unknown",
+        "capture_sha": capture_sha,
+        "head_at_publish": current_sha,
+        "checked_at": utc_now(),
+        "changed_files": [],
+        "overlapping_files": [],
+    }
+    if capture_sha and current_sha == capture_sha:
+        result["kind"] = "exact"
+        return result
+    if not capture_sha or not current_sha:
+        return result
+    if not fetch_pr_head(repo, int(current_pr.get("number") or 0), current_sha):
+        return result
+
+    ancestor = run_capture(
+        ["git", "merge-base", "--is-ancestor", capture_sha, current_sha],
+        cwd=repo,
+        timeout=15,
+    )
+    if ancestor.returncode == 1:
+        result["kind"] = "diverged"
+        return result
+    if ancestor.returncode != 0:
+        return result
+
+    changed = [
+        line.strip()
+        for line in git(repo, "diff", "--name-only", capture_sha, current_sha, check=False).splitlines()
+        if line.strip()
+    ]
+    scope = proof_scope_files(manifest)
+    overlap = sorted(scope.intersection(changed))
+    result["changed_files"] = changed
+    result["overlapping_files"] = overlap
+    result["kind"] = "advanced-related" if overlap else "advanced-unrelated"
+    return result
 
 
 def pr_base_ref(repo: pathlib.Path, pr: dict[str, Any]) -> str:
@@ -642,7 +780,7 @@ def evidence_metadata(path: pathlib.Path, evidence_type: str) -> dict[str, Any]:
         "bytes": path.stat().st_size,
         "sha256": sha256_file(path),
     }
-    if evidence_type == "screenshot":
+    if evidence_type in IMAGE_EVIDENCE_TYPES and path.suffix.lower() == ".png":
         dims = png_dimensions(path)
         if dims:
             metadata["width"] = dims[0]
@@ -663,11 +801,12 @@ def make_evidence(
     status: str,
     observed: str | None = None,
     details: dict[str, Any] | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
         "id": f"E{int(time.time() * 1000)}-{os.getpid()}",
         "type": evidence_type,
-        "label": label,
+        "label": redact(label),
         "status": status,
         "path": relative_artifact_path(run_dir, path),
         "created_at": utc_now(),
@@ -677,6 +816,8 @@ def make_evidence(
         item["observed"] = redact(observed)
     if details:
         item["details"] = details
+    if role:
+        item["role"] = role
     return item
 
 
@@ -739,7 +880,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "tool": {"name": "prove-it", "version": TOOL_VERSION},
         "run": {
             "id": run_id,
-            "title": args.title or (str(target_pr.get("title")) if target_pr else "Implementation proof"),
+            "title": redact(args.title or (str(target_pr.get("title")) if target_pr else "Implementation proof")),
             "created_at": utc_now(),
             "repo_root": str(repo),
             "artifact_dir": str(out),
@@ -748,8 +889,15 @@ def cmd_init(args: argparse.Namespace) -> int:
             "config_path": config_path,
         },
         "target_pr": target_pr,
+        "capture": {
+            "sha": changes.get("head"),
+            "started_at": utc_now(),
+            "worktree_clean_at_start": not changes.get("dirty", False),
+        },
         "change": changes,
         "budgets": resolved_budgets(config, args.mode),
+        "review_path": [],
+        "proof_scope": {"files": []},
         "claims": [],
         "notes": [],
         "summary": {"status": "pending", "passed": 0, "failed": 0, "not_proven": 0, "skipped": 0},
@@ -769,20 +917,41 @@ def cmd_claim(args: argparse.Namespace) -> int:
     claim_id = args.id or f"C{len(claims) + 1}"
     if any(c.get("id") == claim_id for c in claims):
         raise RuntimeError(f"Claim already exists: {claim_id}")
-    claims.append(
+    claim = {
+        "id": claim_id,
+        "text": redact(args.text),
+        "expected": redact(args.expected),
+        "method": args.method,
+        "priority": args.priority,
+        "status": "pending",
+        "evidence": [],
+        "created_at": utc_now(),
+    }
+    code_refs = add_proof_scope(manifest, args.code or [])
+    if code_refs:
+        claim["code"] = code_refs
+    claims.append(claim)
+    save_manifest(run_dir, manifest)
+    print(claim_id)
+    return 0
+
+
+def cmd_review_step(args: argparse.Namespace) -> int:
+    run_dir = pathlib.Path(args.dir).resolve()
+    manifest = load_manifest(run_dir)
+    steps = manifest.setdefault("review_path", [])
+    if len(steps) >= 5 and not args.force:
+        raise RuntimeError("Review path already has 5 steps. Use --force only when the extra step is necessary.")
+    code_refs = add_proof_scope(manifest, args.code or [])
+    steps.append(
         {
-            "id": claim_id,
-            "text": args.text,
-            "expected": args.expected,
-            "method": args.method,
-            "priority": args.priority,
-            "status": "pending",
-            "evidence": [],
-            "created_at": utc_now(),
+            "position": len(steps) + 1,
+            "text": redact(args.text),
+            "code": code_refs,
         }
     )
     save_manifest(run_dir, manifest)
-    print(claim_id)
+    print(len(steps))
     return 0
 
 
@@ -871,7 +1040,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     log_path.write_text(body, encoding="utf-8")
 
     observed = args.observed or (
-        f"{args.label} passed in {duration:.2f}s" if passed else f"{args.label} failed with exit {returncode}"
+        one_line(claim.get("text"), 180) if passed else f"{args.label} failed with exit {returncode}."
     )
     evidence = make_evidence(
         run_dir=run_dir,
@@ -1037,7 +1206,8 @@ def cmd_http(args: argparse.Namespace) -> int:
     )
     log_path.write_text(body, encoding="utf-8")
 
-    observed = args.observed or (f"{args.method.upper()} returned {status} and matched all assertions" if passed else f"{args.method.upper()} returned {status}; an assertion failed")
+    request_path = urllib.parse.urlparse(args.url).path or "/"
+    observed = args.observed or f"{args.method.upper()} {request_path} returned {status}."
     evidence = make_evidence(
         run_dir=run_dir,
         evidence_type="http",
@@ -1070,6 +1240,10 @@ def cmd_add(args: argparse.Namespace) -> int:
     evidence_type = args.type
     if evidence_type not in ALL_EVIDENCE_TYPES:
         raise RuntimeError(f"Unsupported evidence type: {evidence_type}")
+    if args.role and evidence_type not in MEDIA_EVIDENCE_TYPES:
+        raise RuntimeError("--role is only valid for screenshots, videos, and diagrams")
+    if evidence_type == "diagram" and args.proves:
+        raise RuntimeError("A diagram can explain a claim but cannot prove runtime behavior; omit --proves")
     imported = import_artifact(run_dir, pathlib.Path(args.path), evidence_type, args.label, copy=not args.no_copy)
     passed = not args.failed
     evidence = make_evidence(
@@ -1079,6 +1253,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         path=imported,
         status="passed" if passed else "failed",
         observed=args.observed,
+        role=args.role,
     )
     claim.setdefault("evidence", []).append(evidence)
     if args.proves:
@@ -1131,6 +1306,26 @@ def validate_manifest(run_dir: pathlib.Path, manifest: dict[str, Any]) -> dict[s
     command_count = 0
     max_video_duration = 0.0
 
+    capture_sha = manifest_capture_sha(manifest)
+    if not capture_sha:
+        errors.append("capture SHA is missing")
+
+    review_path = manifest.get("review_path", [])
+    if not isinstance(review_path, list):
+        errors.append("review_path must be an array")
+        review_path = []
+    if len(review_path) > 5:
+        warnings.append(f"review path exceeds 5 steps: {len(review_path)}")
+    for index, step in enumerate(review_path, start=1):
+        if not isinstance(step, dict) or not str(step.get("text") or "").strip():
+            errors.append(f"review step {index} is missing text")
+            continue
+        for code_ref in step.get("code", []):
+            try:
+                parse_code_ref(str(code_ref))
+            except RuntimeError as exc:
+                errors.append(f"review step {index}: {exc}")
+
     claims = manifest.get("claims", [])
     if not isinstance(claims, list):
         errors.append("claims must be an array")
@@ -1150,6 +1345,23 @@ def validate_manifest(run_dir: pathlib.Path, manifest: dict[str, Any]) -> dict[s
             counts[status] += 1
         if status == "passed" and not claim.get("evidence") and claim.get("method") != "static":
             warnings.append(f"{cid}: marked passed without evidence")
+        evidence_types = {
+            str(item.get("type") or "")
+            for item in claim.get("evidence", [])
+            if isinstance(item, dict)
+        }
+        method = str(claim.get("method") or "")
+        if status == "passed" and method == "browser" and not evidence_types.intersection({"screenshot", "video"}):
+            errors.append(f"{cid}: browser claim is marked passed without a screenshot or video")
+        if status == "passed" and method == "screenshot" and "screenshot" not in evidence_types:
+            errors.append(f"{cid}: screenshot claim is marked passed without screenshot evidence")
+        if status == "passed" and method == "video" and "video" not in evidence_types:
+            errors.append(f"{cid}: video claim is marked passed without video evidence")
+        for code_ref in claim.get("code", []):
+            try:
+                parse_code_ref(str(code_ref))
+            except RuntimeError as exc:
+                errors.append(f"{cid}: {exc}")
         for evidence in claim.get("evidence", []):
             etype = evidence.get("type", "unknown")
             evidence_counts[etype] = evidence_counts.get(etype, 0) + 1
@@ -1190,9 +1402,18 @@ def validate_manifest(run_dir: pathlib.Path, manifest: dict[str, Any]) -> dict[s
         warnings.append(f"screenshot budget exceeded: {evidence_counts.get('screenshot', 0)}")
     if evidence_counts.get("video", 0) > int(budgets.get("max_videos", DEFAULT_BUDGETS["max_videos"])):
         warnings.append(f"video budget exceeded: {evidence_counts.get('video', 0)}")
+    if evidence_counts.get("diagram", 0) > int(budgets.get("max_diagrams", DEFAULT_BUDGETS["max_diagrams"])):
+        warnings.append(f"diagram budget exceeded: {evidence_counts.get('diagram', 0)}")
     max_allowed_duration = float(budgets.get("max_video_seconds", DEFAULT_BUDGETS["max_video_seconds"]))
     if max_video_duration > max_allowed_duration:
         warnings.append(f"video exceeds duration budget: {max_video_duration:.1f}s > {max_allowed_duration:.1f}s")
+
+    relationship = manifest.get("relationship")
+    if relationship is not None:
+        valid_relationships = {"exact", "advanced-unrelated", "advanced-related", "diverged", "unknown"}
+        kind = relationship.get("kind") if isinstance(relationship, dict) else None
+        if kind not in valid_relationships:
+            errors.append(f"invalid commit relationship: {kind}")
 
     if counts["failed"]:
         status = "failed"
@@ -1233,21 +1454,109 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def status_icon(status: str) -> str:
-    return {"passed": "✅", "failed": "❌", "not_proven": "⚠️", "pending": "⚠️", "skipped": "➖"}.get(status, "⚠️")
+def status_label(status: str) -> str:
+    return {
+        "passed": "Verified",
+        "failed": "Failed",
+        "not_proven": "Not proved",
+        "pending": "Not proved",
+        "skipped": "Skipped",
+    }.get(status, "Not proved")
 
 
-def evidence_label(evidence: dict[str, Any]) -> str:
-    etype = evidence.get("type", "evidence")
-    label = str(evidence.get("label", etype))
-    if etype == "screenshot":
-        return f"[Screenshot](./{evidence['path']})"
-    if etype == "video":
-        return f"[Short demo](./{evidence['path']})"
-    details = evidence.get("details", {})
-    if etype == "http" and details.get("status"):
-        return f"{label} (`{details.get('status')}`)"
-    return label
+def evidence_role(evidence: dict[str, Any]) -> str:
+    explicit = str(evidence.get("role") or "")
+    if explicit in {"primary", "before", "after", "final", "detail"}:
+        return explicit
+    hint = f"{evidence.get('label', '')} {evidence.get('path', '')}".casefold()
+    for role in ("before", "after", "final"):
+        if role in hint:
+            return role
+    if evidence.get("type") == "video":
+        return "primary"
+    return "detail"
+
+
+def markdown_alt(value: str) -> str:
+    return re.sub(r"[\[\]\r\n]+", " ", value).strip() or "Prove It visual"
+
+
+def bounded_excerpt(text: str, *, max_lines: int = 6, max_chars: int = 700) -> list[str]:
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    selected: list[str] = []
+    used = 0
+    for line in lines:
+        clean = redact(line)
+        remaining = max_chars - used
+        if remaining <= 0 or len(selected) >= max_lines:
+            break
+        if len(clean) > remaining:
+            clean = clean[: max(1, remaining - 3)].rstrip() + "..."
+        selected.append(clean)
+        used += len(clean)
+    if len(lines) > len(selected) and selected:
+        selected[-1] = selected[-1].rstrip(".") + "..."
+    return selected
+
+
+def evidence_excerpt(run_dir: pathlib.Path, evidence: dict[str, Any]) -> list[str]:
+    rel = str(evidence.get("path") or "")
+    if not rel:
+        return []
+    path = (run_dir / rel).resolve()
+    try:
+        path.relative_to(run_dir.resolve())
+    except ValueError:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    etype = str(evidence.get("type") or "")
+    if etype == "http" and "--- response body ---" in text:
+        text = text.split("--- response body ---", 1)[1]
+    elif "--- stdout ---" in text:
+        text = text.split("--- stdout ---", 1)[1]
+        if "--- stderr ---" in text:
+            text = text.split("--- stderr ---", 1)[0]
+    else:
+        return []
+    return bounded_excerpt(text)
+
+
+def receipt_lines(run_dir: pathlib.Path, evidence: dict[str, Any]) -> list[str]:
+    etype = str(evidence.get("type") or "evidence")
+    details = evidence.get("details") if isinstance(evidence.get("details"), dict) else {}
+    lines: list[str] = []
+
+    if etype == "http":
+        parsed = urllib.parse.urlparse(str(details.get("url") or ""))
+        target = parsed.path or "/"
+        lines.append(f"{details.get('method', 'HTTP')} {target}")
+        lines.append(f"status: {details.get('status', 'unknown')}")
+    else:
+        lines.append(f"result: {str(evidence.get('status') or 'unknown')}")
+        if "exit_code" in details:
+            lines.append(f"exit: {details.get('exit_code')}")
+
+    assertions = [str(value) for value in details.get("assertions", []) if str(value).strip()]
+    for assertion in assertions[:4]:
+        lines.append(f"assert: {assertion}")
+    if len(assertions) > 4:
+        lines.append(f"assert: {len(assertions) - 4} more checks recorded")
+
+    excerpt = evidence_excerpt(run_dir, evidence)
+    if excerpt:
+        lines.append("output:")
+        lines.extend(f"  {line}" for line in excerpt)
+    return lines
+
+
+def proof_comment_marker(manifest: dict[str, Any]) -> str:
+    run_id = slug(str(manifest.get("run", {}).get("id") or "proof-run"), "proof-run")
+    capture_sha = manifest_capture_sha(manifest)
+    return f"<!-- prove-it:run id={run_id} capture-sha={capture_sha} -->"
 
 
 def compact_command(command: str, limit: int = 160) -> str:
@@ -1257,56 +1566,107 @@ def compact_command(command: str, limit: int = 160) -> str:
     return command[: limit - 1].rstrip() + "…"
 
 
-def html_report(run_dir: pathlib.Path, manifest: dict[str, Any], validation: dict[str, Any]) -> str:
-    claims_html: list[str] = []
-    for claim in manifest.get("claims", []):
-        evidence_html: list[str] = []
-        for evidence in claim.get("evidence", []):
-            path = html.escape(evidence.get("path", ""), quote=True)
-            label = html.escape(evidence.get("label", evidence.get("type", "Evidence")))
-            observed = html.escape(evidence.get("observed", ""))
-            etype = evidence.get("type")
-            if etype == "screenshot":
-                content = f'<a href="{path}"><img loading="lazy" src="{path}" alt="{label}"></a>'
-            elif etype == "video":
-                content = f'<video controls preload="metadata" src="{path}"></video>'
-            else:
-                details = evidence.get("details", {})
-                command = html.escape(str(details.get("command", "")))
-                content = f"<code>{command}</code>" if command else f'<a href="{path}">Open local evidence</a>'
-            evidence_html.append(f'<div class="evidence"><strong>{label}</strong><p>{observed}</p>{content}</div>')
-        claims_html.append(
-            "".join(
-                [
-                    f'<section class="claim {html.escape(claim.get("status", "pending"))}">',
-                    f'<header><span>{status_icon(claim.get("status", "pending"))}</span><div><h2>{html.escape(claim.get("text", ""))}</h2>',
-                    f'<p class="expected">Expected: {html.escape(claim.get("expected", ""))}</p></div></header>',
-                    f'<p class="observed">{html.escape(claim.get("observed", "Not yet proven"))}</p>',
-                    "".join(evidence_html),
-                    "</section>",
-                ]
-            )
-        )
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(manifest['run'].get('title', 'Prove It'))}</title>
-<style>
-:root {{ color-scheme: light dark; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
-body {{ max-width: 1040px; margin: 0 auto; padding: 40px 24px 80px; background: #f5f5f7; color: #1d1d1f; }}
-.hero {{ background: white; border-radius: 22px; padding: 28px 32px; box-shadow: 0 8px 30px #0000000d; margin-bottom: 18px; }}
-.hero h1 {{ margin: 0 0 8px; font-size: 32px; }} .meta {{ color:#6e6e73; }}
-.claim {{ background:white; border-radius:18px; padding:24px; margin:14px 0; border-left:5px solid #86868b; box-shadow:0 5px 20px #0000000a; }}
-.claim.passed {{ border-left-color:#34c759; }} .claim.failed {{ border-left-color:#ff3b30; }} .claim.not_proven,.claim.pending {{ border-left-color:#ff9f0a; }}
-.claim header {{ display:flex; gap:12px; align-items:flex-start; }} .claim h2 {{ margin:0; font-size:20px; }} .expected,.meta {{ font-size:14px; }}
-.observed {{ font-weight:600; }} .evidence {{ margin-top:18px; padding-top:18px; border-top:1px solid #d2d2d7; }}
-img,video {{ display:block; width:100%; max-height:620px; object-fit:contain; margin-top:12px; border-radius:12px; background:#000; }}
-code {{ display:block; white-space:pre-wrap; overflow:auto; padding:12px; background:#f0f0f2; border-radius:10px; }}
-@media (prefers-color-scheme: dark) {{ body {{ background:#111; color:#f5f5f7; }} .hero,.claim {{ background:#1c1c1e; }} .meta,.expected {{ color:#a1a1a6; }} code {{ background:#2c2c2e; }} .evidence {{ border-color:#38383a; }} }}
-</style></head><body>
-<div class="hero"><h1>{html.escape(manifest['run'].get('title', 'Implementation proof'))}</h1>
-<p class="meta">{validation['passed']}/{validation['claims']} claims proven · {html.escape(manifest['run'].get('mode','fast'))} mode · {html.escape(manifest['change'].get('head','')[:8])}</p></div>
-{''.join(claims_html) or '<section class="claim"><h2>No runtime proof required</h2></section>'}
-</body></html>"""
+def commit_markdown(manifest: dict[str, Any], sha: str) -> str:
+    short = sha[:8] if sha else "unknown"
+    target = manifest.get("target_pr") or {}
+    repo_name = str(target.get("repo") or "")
+    if repo_name and sha:
+        return f"[`{short}`](https://github.com/{repo_name}/commit/{sha})"
+    return f"`{short}`"
+
+
+def code_ref_markdown(manifest: dict[str, Any], value: str) -> str:
+    path, start, end = parse_code_ref(value)
+    label = normalize_code_ref(value)
+    target = manifest.get("target_pr") or {}
+    repo_name = str(target.get("repo") or "")
+    sha = manifest_capture_sha(manifest)
+    if not repo_name or not sha:
+        return f"`{label}`"
+    encoded_path = urllib.parse.quote(path, safe="/")
+    anchor = ""
+    if start is not None:
+        anchor = f"#L{start}" if start == end else f"#L{start}-L{end}"
+    return f"[`{label}`](https://github.com/{repo_name}/blob/{sha}/{encoded_path}{anchor})"
+
+
+def code_refs_markdown(manifest: dict[str, Any], refs: Iterable[str]) -> str:
+    values = [code_ref_markdown(manifest, str(value)) for value in refs]
+    return "<br>".join(values) if values else "—"
+
+
+def one_line(value: Any, limit: int = 180) -> str:
+    text = redact(" ".join(str(value or "").split()))
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def relationship_lines(manifest: dict[str, Any]) -> list[str]:
+    relationship = manifest.get("relationship")
+    capture_sha = manifest_capture_sha(manifest)
+    target = manifest.get("target_pr") or {}
+    if not isinstance(relationship, dict):
+        relationship = {
+            "kind": "exact",
+            "capture_sha": capture_sha,
+            "head_at_publish": str(target.get("headRefOid") or capture_sha),
+            "changed_files": [],
+            "overlapping_files": [],
+        }
+
+    kind = str(relationship.get("kind") or "unknown")
+    current_sha = str(relationship.get("head_at_publish") or "")
+    capture = commit_markdown(manifest, capture_sha)
+    current = commit_markdown(manifest, current_sha)
+    status = str(manifest.get("summary", {}).get("status") or "no-proof")
+
+    if status == "failed":
+        lead = f"Tested on {capture} and hit a failure."
+    elif status == "partial":
+        lead = f"Tested on {capture}, but I couldn't check everything."
+    elif status == "passed":
+        lead = f"Tested on {capture}."
+    else:
+        lead = f"I couldn't get a useful runtime check on {capture}."
+
+    freshness = ""
+    if kind != "exact":
+        lead += f" The PR is now {current}."
+        if kind == "advanced-unrelated":
+            freshness = "I didn't rerun the latest head. None of the files I checked changed afterward."
+        elif kind == "advanced-related":
+            overlap = [str(path) for path in relationship.get("overlapping_files", [])]
+            named = ", ".join(f"`{path}`" for path in overlap[:3])
+            if len(overlap) > 3:
+                named += f", and {len(overlap) - 3} more"
+            freshness = "I didn't rerun the latest head."
+            freshness += f" {named} changed afterward." if named else " Files I checked changed afterward."
+        elif kind == "diverged":
+            freshness = "The PR no longer contains the commit I tested."
+        else:
+            freshness = "I couldn't tell how the current head relates to the commit I tested."
+
+    lines = [
+        "<!-- prove-it:relationship:start -->",
+        lead,
+    ]
+
+    seen: set[str] = set()
+    for claim in [claim for claim in manifest.get("claims", []) if isinstance(claim, dict)][:3]:
+        value = one_line(claim.get("observed") or claim.get("expected") or claim.get("text"), limit=180)
+        key = value.casefold()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        lines.append("") if len(seen) == 1 else None
+        lines.append(f"- {value}")
+
+    if freshness:
+        lines.extend(["", freshness])
+
+    lines.append("<!-- prove-it:relationship:end -->")
+    return lines
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -1317,121 +1677,255 @@ def cmd_render(args: argparse.Namespace) -> int:
     manifest["validation"] = {"at": utc_now(), "errors": validation["errors"], "warnings": validation["warnings"]}
     save_manifest(run_dir, manifest)
 
-    lines: list[str] = ["<!-- prove-it:start -->", "## Prove It", ""]
-    if validation["status"] == "passed":
-        lines.append(f"**{validation['passed']}/{validation['claims']} claims proven.**")
-    elif validation["status"] == "no-proof":
-        lines.append("**No runtime proof was required for this change.**")
-    else:
-        lines.append(f"**{validation['passed']}/{validation['claims']} claims proven; {validation['failed']} failed; {validation['not_proven']} not proven.**")
-    if manifest.get("claims"):
-        lines.extend(["", "| Claim | Result | Evidence |", "|---|---:|---|"])
-
+    claims = [claim for claim in manifest.get("claims", []) if isinstance(claim, dict)]
     media: list[dict[str, Any]] = []
-    for claim in manifest.get("claims", []):
-        evidence = claim.get("evidence", [])
-        primary = [item for item in evidence if item.get("type") not in {"console", "errors", "log", "file", "trace", "har"}]
-        evidence_text = ", ".join(evidence_label(item) for item in primary) or "—"
-        claim_text = str(claim.get("text", "")).replace("|", "\\|")
-        lines.append(f"| {claim_text} | {status_icon(claim.get('status', 'pending'))} | {evidence_text} |")
-        media.extend(item for item in evidence if item.get("type") in MEDIA_EVIDENCE_TYPES)
+    diagnostics: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for claim in claims:
+        for item in claim.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            etype = str(item.get("type") or "")
+            if etype in MEDIA_EVIDENCE_TYPES:
+                enriched = dict(item)
+                enriched["claim_id"] = claim.get("id")
+                enriched["claim_text"] = claim.get("text")
+                media.append(enriched)
+            elif etype in {"console", "errors", "trace", "har"}:
+                diagnostics.append((claim, item))
 
-    for claim in manifest.get("claims", []):
-        observed = claim.get("observed")
-        non_media = [e for e in claim.get("evidence", []) if e.get("type") not in MEDIA_EVIDENCE_TYPES]
-        if not observed and not non_media:
-            continue
-        lines.extend(["", "<details>", f"<summary>{status_icon(claim.get('status','pending'))} {claim.get('id')}: {claim.get('text')}</summary>", ""])
-        if observed:
-            lines.append(f"**Observed:** {observed}")
-            lines.append("")
-        for item in non_media:
-            details = item.get("details", {})
-            if details.get("command"):
-                command = compact_command(str(details["command"]))
-                lines.append(f"- {item.get('label')}: `{command}` → exit `{details.get('exit_code')}` in `{details.get('duration_seconds')}s`")
-            elif item.get("type") == "http":
-                parsed = urllib.parse.urlparse(str(details.get("url", "")))
-                target = parsed.path or "/"
-                if parsed.query:
-                    target += "?" + parsed.query
-                lines.append(f"- {item.get('label')}: `{details.get('method', 'HTTP')} {target}` → `{details.get('status')}` in `{details.get('duration_seconds')}s`")
-            elif item.get("type") == "console" and item.get("metadata", {}).get("bytes") == 0:
-                lines.append("- Browser console: no output")
-            elif item.get("type") == "errors" and item.get("metadata", {}).get("bytes") == 0:
-                lines.append("- Page errors: none")
-            else:
-                lines.append(f"- {item.get('label')}: {item.get('observed', item.get('status'))}")
-        lines.extend(["", "</details>"])
-
-    screenshots = [item for item in media if item.get("type") == "screenshot"]
     videos = [item for item in media if item.get("type") == "video"]
-    if screenshots:
-        featured = screenshots[0]
-        lines.extend(["", "### Key state", "", f"![{featured.get('label','Screenshot')}](./{featured['path']})"])
-    if videos:
-        featured = videos[0]
-        lines.extend(["", f"[Watch the short interaction demo](./{featured['path']})"])
+    screenshots = [item for item in media if item.get("type") == "screenshot"]
+    diagrams = [item for item in media if item.get("type") == "diagram"]
 
-    if validation["warnings"]:
-        lines.extend(["", "<details>", "<summary>Proof warnings</summary>", ""])
-        lines.extend(f"- {warning}" for warning in validation["warnings"])
+    lines: list[str] = [
+        proof_comment_marker(manifest),
+        "## QA",
+        "",
+        *relationship_lines(manifest),
+    ]
+
+    # Show real product artifacts immediately. Headings are unnecessary when the
+    # media already explains its shape.
+    for item in videos:
+        lines.extend(["", f"![](./{item['path']})"])
+
+    before = [item for item in screenshots if evidence_role(item) == "before"]
+    after = [item for item in screenshots if evidence_role(item) == "after"]
+    paired_paths: set[str] = set()
+    if before and after:
+        left, right = before[0], after[0]
+        paired_paths.update({str(left["path"]), str(right["path"])})
+        lines.extend(
+            [
+                "",
+                "| Before | After |",
+                "|:---:|:---:|",
+                f"| ![{markdown_alt(str(left.get('label') or 'Before'))}](./{left['path']}) | ![{markdown_alt(str(right.get('label') or 'After'))}](./{right['path']}) |",
+            ]
+        )
+
+    for item in [item for item in screenshots if str(item.get("path")) not in paired_paths]:
+        label = markdown_alt(str(item.get("label") or "Screenshot"))
+        lines.extend(["", f"![{label}](./{item['path']})"])
+
+    for item in diagrams:
+        label = markdown_alt(str(item.get("label") or "Diagram"))
+        lines.extend(["", f"![{label}](./{item['path']})"])
+
+    notes = [one_line(item.get("text"), limit=240) for item in manifest.get("notes", []) if isinstance(item, dict) and item.get("text")]
+    if notes:
+        lines.extend(["", notes[0]])
+
+    runtime_items: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for claim in claims:
+        for item in claim.get("evidence", []):
+            if (
+                isinstance(item, dict)
+                and str(item.get("type") or "") not in MEDIA_EVIDENCE_TYPES | {"console", "errors", "trace", "har"}
+            ):
+                runtime_items.append((claim, item))
+
+    review_path = [step for step in manifest.get("review_path", []) if isinstance(step, dict)]
+    code_refs: list[str] = []
+    for claim in claims:
+        for ref in claim.get("code", []):
+            normalized = normalize_code_ref(str(ref))
+            if normalized not in code_refs:
+                code_refs.append(normalized)
+
+    extra_notes = notes[1:]
+    has_details = bool(runtime_items or review_path or code_refs or diagnostics or extra_notes or validation["warnings"])
+    if has_details:
+        lines.extend(["", "<details>", "<summary>What I ran</summary>", ""])
+
+        multiple_runtime = len(runtime_items) > 1
+        for _claim, item in runtime_items:
+            item_details = item.get("details") if isinstance(item.get("details"), dict) else {}
+            command = one_line(item_details.get("command"), limit=220)
+            if multiple_runtime:
+                lines.append(f"**{one_line(item.get('label') or item.get('type') or 'Check', 100)}**")
+                lines.append("")
+            if command:
+                lines.append(f"`{compact_command(command, 220)}`")
+            block = receipt_lines(run_dir, item)
+            if block:
+                if command:
+                    lines.append("")
+                lines.extend(["```text", *block, "```"] )
+            lines.append("")
+
+        if review_path:
+            steps = [one_line(step.get("text"), limit=90).rstrip(".") for step in review_path if step.get("text")]
+            if steps:
+                lines.append("Path: " + " → ".join(steps))
+                lines.append("")
+
+        if code_refs:
+            lines.extend([f"Code: {code_refs_markdown(manifest, code_refs)}", ""])
+
+        if diagnostics:
+            for _claim, item in diagnostics:
+                etype = str(item.get("type") or "diagnostic")
+                if etype == "console" and item.get("metadata", {}).get("bytes") == 0:
+                    lines.append("Console: no new output")
+                elif etype == "errors" and item.get("metadata", {}).get("bytes") == 0:
+                    lines.append("Page errors: none")
+                else:
+                    lines.append(f"{one_line(item.get('label') or etype, 80)}: {one_line(item.get('observed') or item.get('status'), 180)}")
+            lines.append("")
+
+        for note in extra_notes:
+            lines.append(note)
+        for warning in validation["warnings"]:
+            lines.append(one_line(warning, 240))
+        if extra_notes or validation["warnings"]:
+            lines.append("")
+
+        while lines and lines[-1] == "":
+            lines.pop()
         lines.extend(["", "</details>"])
 
     lines.extend(["", "<!-- prove-it:end -->"])
     (run_dir / "proof.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    (run_dir / "report.html").write_text(html_report(run_dir, manifest, validation), encoding="utf-8")
 
-    attachments = []
-    for item in media:
-        path = item.get("path")
-        if path and path not in attachments:
-            attachments.append(path)
+    attachments: list[str] = []
+    for rel in [str(item.get("path") or "") for item in media]:
+        if rel and rel not in attachments:
+            attachments.append(rel)
     atomic_json(run_dir / "attachments.json", {"files": attachments})
-    attach_lines = ["#!/usr/bin/env bash", "# Source from this proof directory so gh can rewrite local media references.", "PROVE_IT_ATTACH=("]
-    attach_lines.extend(f"  --attach {shlex.quote(path)}" for path in attachments)
-    attach_lines.append(")")
-    attachments_script = run_dir / "attachments.sh"
-    attachments_script.write_text("\n".join(attach_lines) + "\n", encoding="utf-8")
-    attachments_script.chmod(0o755)
 
     print(str(run_dir / "proof.md"))
     return 1 if validation["errors"] else 0
 
-
-def cmd_compose(args: argparse.Namespace) -> int:
-    run_dir = pathlib.Path(args.dir).resolve()
-    base_body = pathlib.Path(args.body).read_text(encoding="utf-8").rstrip()
-    proof = (run_dir / "proof.md").read_text(encoding="utf-8").strip()
-    out = pathlib.Path(args.out).resolve() if args.out else run_dir / "pr-body.md"
-
-    pattern = re.compile(r"(?ms)^<!-- prove-it:start -->[ \t]*\n.*?^<!-- prove-it:end -->[ \t]*(?:\n|\Z)")
-    match = pattern.search(base_body)
-    if match:
-        before = base_body[: match.start()].rstrip()
-        after = base_body[match.end() :].lstrip()
-        pieces = [part for part in (before, proof, after) if part]
-        composed = "\n\n".join(pieces)
-    else:
-        composed = base_body + ("\n\n" if base_body else "") + proof
-    out.write_text(composed.rstrip() + "\n", encoding="utf-8")
-    print(str(out))
-    return 0
-
-
-
-def gh_supports_pr_attach(repo: pathlib.Path) -> bool:
+def gh_supports_comment_attach(repo: pathlib.Path) -> bool:
     gh_path = shutil.which("gh")
     if not gh_path:
         return False
     try:
-        cp = run_capture([gh_path, "pr", "edit", "--help"], cwd=repo, timeout=8)
+        cp = run_capture([gh_path, "pr", "comment", "--help"], cwd=repo, timeout=8)
     except subprocess.TimeoutExpired:
         return False
     return cp.returncode == 0 and "--attach" in (cp.stdout + cp.stderr)
 
 
-def assert_fresh_pr_target(run_dir: pathlib.Path, manifest: dict[str, Any], selector: str | None = None) -> dict[str, Any]:
+def gh_json_value(repo: pathlib.Path, args: Sequence[str], timeout: float = 20.0) -> Any:
+    gh_path = shutil.which("gh")
+    if not gh_path:
+        raise RuntimeError("GitHub CLI (gh) is required to publish proof")
+    cp = run_capture([gh_path, *args], cwd=repo, timeout=timeout)
+    if cp.returncode != 0:
+        raise RuntimeError(redact(cp.stderr.strip() or cp.stdout.strip() or f"gh {' '.join(args)} failed"))
+    try:
+        return json.loads(cp.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gh returned invalid JSON for {' '.join(args)}") from exc
+
+
+def flatten_comments(value: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        if "body" in value and "id" in value:
+            found.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(flatten_comments(item))
+    return found
+
+
+def comment_id_from_output(output: str) -> int | None:
+    matches = re.findall(r"#issuecomment-(\d+)", output)
+    return int(matches[-1]) if matches else None
+
+
+def fetch_comment(repo: pathlib.Path, repo_name: str, comment_id: int) -> dict[str, Any]:
+    value = gh_json_value(repo, ["api", f"repos/{repo_name}/issues/comments/{comment_id}"])
+    if not isinstance(value, dict):
+        raise RuntimeError(f"GitHub returned an invalid comment payload for {comment_id}")
+    return value
+
+
+def find_published_comment(
+    repo: pathlib.Path,
+    repo_name: str,
+    pr_number: int,
+    manifest: dict[str, Any],
+    command_output: str,
+) -> dict[str, Any] | None:
+    comment_id = comment_id_from_output(command_output)
+    if comment_id is not None:
+        try:
+            return fetch_comment(repo, repo_name, comment_id)
+        except RuntimeError:
+            pass
+
+    marker = proof_comment_marker(manifest)
+    try:
+        value = gh_json_value(
+            repo,
+            ["api", "--paginate", "--slurp", f"repos/{repo_name}/issues/{pr_number}/comments?per_page=100"],
+            timeout=60,
+        )
+    except RuntimeError:
+        return None
+    for comment in reversed(flatten_comments(value)):
+        if marker in str(comment.get("body") or ""):
+            return comment
+    return None
+
+
+def update_comment_body(
+    repo: pathlib.Path,
+    repo_name: str,
+    comment_id: int,
+    body: str,
+    run_dir: pathlib.Path,
+    timeout: float,
+) -> dict[str, Any]:
+    payload = run_dir / "comment-update.json"
+    atomic_json(payload, {"body": body})
+    value = gh_json_value(
+        repo,
+        ["api", "--method", "PATCH", f"repos/{repo_name}/issues/comments/{comment_id}", "--input", str(payload)],
+        timeout=timeout,
+    )
+    if not isinstance(value, dict):
+        raise RuntimeError("GitHub returned an invalid updated-comment payload")
+    return value
+
+
+def unresolved_attachment_refs(body: str, attachments: Iterable[str]) -> list[str]:
+    unresolved: list[str] = []
+    for rel in attachments:
+        if f"](./{rel})" in body or f"]({rel})" in body or f"![](./{rel})" in body or f"![]({rel})" in body:
+            unresolved.append(rel)
+    return unresolved
+
+
+def resolve_publish_target(
+    run_dir: pathlib.Path,
+    manifest: dict[str, Any],
+    selector: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     target = manifest.get("target_pr")
     if not isinstance(target, dict) or not target.get("number"):
         raise RuntimeError("This proof run is not bound to a pull request. Re-run /prove-it against an existing PR.")
@@ -1446,17 +1940,19 @@ def assert_fresh_pr_target(run_dir: pathlib.Path, manifest: dict[str, Any], sele
     expected_repo = target.get("repo")
     if expected_repo and current.get("repo") != expected_repo:
         raise RuntimeError(f"Proof targets {expected_repo} but current PR resolved in {current.get('repo')}")
-    expected_head = str(target.get("headRefOid") or manifest.get("change", {}).get("head") or "")
-    current_head = str(current.get("headRefOid") or "")
+    capture_sha = manifest_capture_sha(manifest)
     local_head = try_git(repo, "rev-parse", "HEAD") or ""
-    if not expected_head or current_head != expected_head or local_head != expected_head:
+    if not capture_sha or local_head != capture_sha:
         raise RuntimeError(
-            f"Proof is stale: expected PR head {expected_head[:8] or '(unknown)'}, "
-            f"GitHub has {current_head[:8] or '(unknown)'}, local HEAD is {local_head[:8] or '(none)'}. Rerun /prove-it."
+            f"Local HEAD moved after capture: expected {capture_sha[:8] or '(unknown)'}, "
+            f"found {local_head[:8] or '(none)'}. Check out the captured commit or rerun /prove-it."
         )
     if git(repo, "status", "--porcelain", check=False):
-        raise RuntimeError("Working tree changed after proof capture; rerun /prove-it before attaching evidence")
-    return current
+        raise RuntimeError("Working tree changed after proof capture; clean it or rerun /prove-it before attaching evidence")
+    if str(current.get("state") or "OPEN").upper() != "OPEN":
+        raise RuntimeError(f"PR #{expected_number} is not open")
+    relationship = classify_pr_relationship(repo, manifest, current)
+    return current, relationship
 
 
 def safe_cleanup_run(run_dir: pathlib.Path) -> None:
@@ -1472,36 +1968,53 @@ def safe_cleanup_run(run_dir: pathlib.Path) -> None:
     shutil.rmtree(run_dir)
 
 
+def replace_relationship_block(body: str, manifest: dict[str, Any]) -> str:
+    replacement = "\n".join(relationship_lines(manifest))
+    pattern = re.compile(
+        r"(?ms)^<!-- prove-it:relationship:start -->[ \t]*\n.*?^<!-- prove-it:relationship:end -->[ \t]*"
+    )
+    if not pattern.search(body):
+        raise RuntimeError("Published Prove It section is missing its relationship block")
+    return pattern.sub(replacement, body, count=1)
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     run_dir = pathlib.Path(args.dir).resolve()
     manifest = load_manifest(run_dir)
     repo = pathlib.Path(manifest["run"]["repo_root"]).resolve()
-    current_pr = assert_fresh_pr_target(run_dir, manifest, args.pr)
+    current_pr, relationship = resolve_publish_target(run_dir, manifest, args.pr)
+    manifest["relationship"] = relationship
+    save_manifest(run_dir, manifest)
     validation = validate_manifest(run_dir, manifest)
     if validation["errors"]:
         raise RuntimeError("Proof contains validation errors and cannot be published: " + "; ".join(validation["errors"]))
-    if not gh_supports_pr_attach(repo):
-        raise RuntimeError("Installed GitHub CLI does not support `gh pr edit --attach`; upgrade gh before publishing proof")
+    if not gh_supports_comment_attach(repo):
+        raise RuntimeError("Installed GitHub CLI does not support `gh pr comment --attach`; upgrade gh before publishing proof")
 
     with contextlib.redirect_stdout(io.StringIO()):
         render_rc = cmd_render(argparse.Namespace(dir=str(run_dir)))
     if render_rc != 0:
         raise RuntimeError("Proof rendering failed validation")
 
-    base_body_path = run_dir / "pr-body-existing.md"
-    base_body_path.write_text(str(current_pr.get("body") or ""), encoding="utf-8")
-    body_path = run_dir / "pr-body.md"
-    with contextlib.redirect_stdout(io.StringIO()):
-        cmd_compose(argparse.Namespace(dir=str(run_dir), body=str(base_body_path), out=str(body_path)))
-
+    # cmd_render persists the final summary used by the at-a-glance callout.
+    # Reload before a later head refresh so relationship updates do not overwrite it
+    # with the pre-render pending summary held by this function.
+    manifest = load_manifest(run_dir)
+    body_path = run_dir / "proof.md"
     attachments_data = json.loads((run_dir / "attachments.json").read_text(encoding="utf-8"))
     attachments = [str(item) for item in attachments_data.get("files", [])]
     gh_path = shutil.which("gh")
     assert gh_path is not None
+    repo_name = str(current_pr.get("repo") or manifest.get("target_pr", {}).get("repo") or "")
     command = [
-        gh_path, "pr", "edit", str(current_pr["number"]),
-        "--repo", str(current_pr.get("repo") or manifest.get("target_pr", {}).get("repo")),
-        "--body-file", str(body_path),
+        gh_path,
+        "pr",
+        "comment",
+        str(current_pr["number"]),
+        "--repo",
+        repo_name,
+        "--body-file",
+        str(body_path),
     ]
     for rel in attachments:
         candidate = (run_dir / rel).resolve()
@@ -1515,33 +2028,66 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
     cp = run_capture(command, cwd=run_dir, timeout=args.timeout)
     output = redact((cp.stdout + "\n" + cp.stderr).strip())
-    if cp.returncode != 0:
-        raise RuntimeError(f"gh pr edit failed after attempting proof upload: {output}")
+    comment = find_published_comment(
+        repo,
+        repo_name,
+        int(current_pr["number"]),
+        manifest,
+        output,
+    )
+    if comment is None:
+        if cp.returncode != 0:
+            raise RuntimeError(f"gh pr comment failed and no proof comment was found: {output}")
+        raise RuntimeError("gh pr comment returned success but the published proof comment could not be found")
 
-    updated = resolve_pr(repo, str(current_pr["number"]))
-    body = str(updated.get("body") or "")
-    unresolved = [rel for rel in attachments if f"](./{rel})" in body or f"]({rel})" in body]
+    comment_id = int(comment.get("id") or 0)
+    body = str(comment.get("body") or "")
+    unresolved = unresolved_attachment_refs(body, attachments)
     if unresolved:
-        raise RuntimeError("GitHub CLI returned success but local attachment references remain in PR body: " + ", ".join(unresolved))
-    if "<!-- prove-it:start -->" not in body or "<!-- prove-it:end -->" not in body:
-        raise RuntimeError("GitHub CLI returned success but the PR body does not contain the Prove It section")
+        outcome = "failed" if cp.returncode != 0 else "returned success"
+        raise RuntimeError(
+            f"gh pr comment {outcome}, but local attachment references remain in the comment: " + ", ".join(unresolved)
+        )
+    if proof_comment_marker(manifest) not in body or "<!-- prove-it:end -->" not in body:
+        raise RuntimeError("The published comment is missing its Prove It run marker")
 
+    # The PR may advance while media uploads. Edit this exact comment only to
+    # refresh relationship text; keep GitHub's rewritten attachment URLs intact.
+    updated_pr = resolve_pr(repo, str(current_pr["number"]))
+    if str(updated_pr.get("headRefOid") or "") != str(relationship.get("head_at_publish") or ""):
+        final_relationship = classify_pr_relationship(repo, manifest, updated_pr)
+        manifest["relationship"] = final_relationship
+        save_manifest(run_dir, manifest)
+        body = replace_relationship_block(body, manifest)
+        comment = update_comment_body(repo, repo_name, comment_id, body, run_dir, args.timeout)
+        body = str(comment.get("body") or "")
+        unresolved = unresolved_attachment_refs(body, attachments)
+        if unresolved:
+            raise RuntimeError("Refreshing the SHA relationship restored local attachment references: " + ", ".join(unresolved))
+
+    relationship = manifest.get("relationship", relationship)
+    comment_url = str(comment.get("html_url") or "")
+    if not comment_url and output.strip():
+        comment_url = output.strip().splitlines()[-1]
     result = {
-        "pr": updated.get("number"),
-        "url": updated.get("url"),
+        "pr": updated_pr.get("number"),
+        "pr_url": updated_pr.get("url"),
+        "comment_url": comment_url,
         "status": validation.get("status"),
         "attachments": len(attachments),
+        "captured_sha": manifest_capture_sha(manifest),
+        "head_at_publish": relationship.get("head_at_publish"),
+        "relationship": relationship.get("kind"),
         "cleaned_up": not args.keep,
     }
     if args.keep:
         result["proof_dir"] = str(run_dir)
         print(json.dumps(result, indent=2))
     else:
-        url = str(updated.get("url") or "")
         safe_cleanup_run(run_dir)
         print(json.dumps(result, indent=2))
-        if url:
-            print(url)
+        if comment_url:
+            print(comment_url)
     return 0
 
 
@@ -1573,12 +2119,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     }
     if result["gh"]["available"]:
         try:
-            cp = run_capture([result["gh"]["path"], "pr", "edit", "--help"], timeout=8)
-            result["gh"]["supports_attach"] = "--attach" in (cp.stdout + cp.stderr)
+            cp = run_capture([result["gh"]["path"], "pr", "comment", "--help"], timeout=8)
+            result["gh"]["supports_comment_attach"] = "--attach" in (cp.stdout + cp.stderr)
         except subprocess.TimeoutExpired:
-            result["gh"]["supports_attach"] = False
+            result["gh"]["supports_comment_attach"] = False
     else:
-        result["gh"]["supports_attach"] = False
+        result["gh"]["supports_comment_attach"] = False
     print(json.dumps(result, indent=2))
     required_ok = result["git"]["available"] and result["python"]["available"] and result["gh"]["available"]
     return 0 if required_ok else 1
@@ -1613,8 +2159,16 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--expected", required=True)
     claim.add_argument("--method", choices=["test", "http", "command", "browser", "screenshot", "video", "database", "log", "static"], required=True)
     claim.add_argument("--priority", choices=["must", "should"], default="must")
+    claim.add_argument("--code", action="append", help="Repo-relative code reference: path, path:line-line, or path#Lline-Lline.")
     claim.add_argument("--force", action="store_true")
     claim.set_defaults(func=cmd_claim)
+
+    review = sub.add_parser("review-step", help="Add one reviewer-oriented reading step and its code references.")
+    review.add_argument("--dir", required=True)
+    review.add_argument("--text", required=True)
+    review.add_argument("--code", action="append")
+    review.add_argument("--force", action="store_true")
+    review.set_defaults(func=cmd_review_step)
 
     run = sub.add_parser("run", help="Run a targeted command and capture its evidence.")
     run.add_argument("--dir", required=True)
@@ -1661,6 +2215,11 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--path", required=True)
     add.add_argument("--label", required=True)
     add.add_argument("--observed")
+    add.add_argument(
+        "--role",
+        choices=["primary", "before", "after", "final", "detail"],
+        help="Presentation role for screenshots, videos, and diagrams.",
+    )
     add.add_argument("--proves", action="store_true")
     add.add_argument("--failed", action="store_true")
     add.add_argument("--no-copy", action="store_true")
@@ -1683,17 +2242,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--strict", action="store_true")
     validate.set_defaults(func=cmd_validate)
 
-    render = sub.add_parser("render", help="Create proof.md, report.html, and attachment metadata.")
+    render = sub.add_parser("render", help="Create proof.md and attachment metadata.")
     render.add_argument("--dir", required=True)
     render.set_defaults(func=cmd_render)
 
-    compose = sub.add_parser("compose", help="Append proof.md to an existing PR body.")
-    compose.add_argument("--dir", required=True)
-    compose.add_argument("--body", required=True)
-    compose.add_argument("--out")
-    compose.set_defaults(func=cmd_compose)
 
-    publish = sub.add_parser("publish", help="Attach rendered proof to the existing PR with gh, then delete temp artifacts by default.")
+    publish = sub.add_parser("publish", help="Post one self-contained proof comment with gh, then delete temp artifacts by default.")
     publish.add_argument("--dir", required=True)
     publish.add_argument("--pr", help="Optional PR number/URL; must match the PR bound at init.")
     publish.add_argument("--timeout", type=float, default=180)

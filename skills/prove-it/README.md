@@ -1,8 +1,6 @@
 # Prove It
 
-A **human-invoked** Claude Code skill that attaches concise runtime proof to an **existing GitHub pull request**.
-
-It is intentionally not part of PR creation. The human runs it when they want proof:
+A human-invoked Claude Code and Codex skill that leaves a short QA comment on an existing GitHub pull request.
 
 ```text
 /prove-it
@@ -10,44 +8,44 @@ It is intentionally not part of PR creation. The human runs it when they want pr
 /prove-it https://github.com/owner/repo/pull/123
 ```
 
-The skill:
+The default comment is deliberately small:
 
-- binds proof to the PR's current head SHA
-- derives a few observable claims from the PR diff
-- uses targeted commands/API checks for backend claims
-- uses `agent-browser` for screenshots and short interaction videos
-- updates the existing PR with `gh pr edit --attach`
-- removes its temporary local artifacts after a successful upload
+```markdown
+## QA
+
+Tested on `abc1234`.
+
+- The changed behavior did what the reviewer cares about.
+
+[real video or screenshots when useful]
+
+<details><summary>What I ran</summary>...</details>
+```
+
+
+It does not rewrite the PR description, emit checklists, generate a proof dashboard, or wait for CI. If the PR moves while the check is running, the comment still gets posted and says which commit the media came from.
 
 ## Storage
 
-Normal runs use `$TMPDIR/prove-it-pr-*`, never `.git` or the source branch. Successful publication deletes the temp directory immediately. Old abandoned temp runs are pruned after 24 hours.
-
-The durable artifact is the PR body plus GitHub-hosted image/video attachments.
+Runs use `$TMPDIR/prove-it-pr-*`. Successful uploads delete the directory. Nothing is stored in `.git` or committed to the branch.
 
 ## Install
 
-Copy this directory to:
+Install it globally for Codex and Claude Code:
 
-```text
-~/.claude/skills/prove-it/
+```bash
+npx skills add Tbsheff/skills --skill prove-it --global --agent codex claude-code --yes
 ```
 
-or:
-
-```text
-.claude/skills/prove-it/
-```
-
-Do **not** add it to a create-PR hook.
+Claude Code uses `disable-model-invocation: true` and `context: fork`. Codex uses `agents/openai.yaml` to keep the skill explicit-only.
 
 ## Requirements
 
 - Python 3.10+
 - git
-- current GitHub CLI with `gh pr edit --attach`
-- `agent-browser` for frontend proof
-- `ffprobe` optional for video-duration validation
+- GitHub CLI with `gh pr comment --attach`
+- `agent-browser` for frontend checks
+- `ffprobe` only for video-duration checks
 
 The helper has no Python package dependencies.
 
@@ -57,5 +55,3 @@ The helper has no Python package dependencies.
 scripts/prove-it doctor
 python3 scripts/validate_skill.py --self-test
 ```
-
-See `SKILL.md` for the workflow and `TESTING.md` for evaluation notes.

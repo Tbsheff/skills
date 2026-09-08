@@ -1,6 +1,6 @@
 # Project configuration
 
-Place configuration at `.claude/prove-it.json` or `.prove-it.json`. The Claude agent should read it before planning proof. The helper currently consumes `base` and `budgets`; the remaining fields are operational guidance for the agent.
+Use `.claude/prove-it.json` or `.prove-it.json` when the repo needs a specific base, app startup, route, test command, or safe auth recipe.
 
 ```json
 {
@@ -10,18 +10,13 @@ Place configuration at `.claude/prove-it.json` or `.prove-it.json`. The Claude a
     "max_commands": 3,
     "max_screenshots": 2,
     "max_videos": 1,
+    "max_diagrams": 1,
     "max_video_seconds": 30
   },
   "app": {
     "start": "pnpm dev",
     "url": "http://127.0.0.1:3000",
     "ready": "http://127.0.0.1:3000/api/health"
-  },
-  "browser": {
-    "viewport": [1440, 900],
-    "record_fps": 12,
-    "restore": true,
-    "restore_check_text": "Dashboard"
   },
   "areas": [
     {
@@ -33,12 +28,4 @@ Place configuration at `.claude/prove-it.json` or `.prove-it.json`. The Claude a
 }
 ```
 
-Keep commands deterministic and local. Do not put credentials in this file.
-
-The config should eliminate rediscovery of:
-
-- base branch
-- development server command and readiness URL
-- changed-domain routes
-- targeted test commands
-- safe test authentication/session strategy
+Store instructions, not generated evidence. Do not put credentials or tokens in this file.

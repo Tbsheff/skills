@@ -40,10 +40,37 @@ def main() -> int:
         errors.append(f"invalid skill name: {name!r}")
     if not description or len(description) > 1024:
         errors.append(f"description length must be 1..1024, got {len(description)}")
-    if len(text.splitlines()) > 500:
-        errors.append("SKILL.md exceeds the recommended 500 lines")
+    if fields.get("disable-model-invocation") != "true":
+        errors.append("prove-it must set disable-model-invocation: true")
+    if fields.get("context") != "fork":
+        errors.append("prove-it must run with context: fork")
 
-    for markdown in [skill, *sorted((root / "references").glob("*.md")), root / "README.md"]:
+    skill_lines = len(text.splitlines())
+    skill_words = len(text.split())
+    if skill_lines > 120:
+        errors.append(f"SKILL.md exceeds the local 120-line context budget: {skill_lines}")
+    if skill_words > 700:
+        errors.append(f"SKILL.md exceeds the local 700-word context budget: {skill_words}")
+    if "—" in text:
+        errors.append("SKILL.md contains an em dash; use plain punctuation")
+    for phrase in (
+        "it is important to note",
+        "in order to",
+        "serves as",
+        "not just",
+        "seamlessly",
+        "robust",
+        "leverage",
+    ):
+        if phrase in text.casefold():
+            errors.append(f"SKILL.md contains filler or AI-style wording: {phrase!r}")
+
+    reference_files = sorted((root / "references").glob("*.md"))
+    for reference in reference_files:
+        if len(reference.read_text(encoding="utf-8").splitlines()) > 160:
+            errors.append(f"reference is too large for on-demand loading: {reference.relative_to(root)}")
+
+    for markdown in [skill, *reference_files, root / "README.md"]:
         body = markdown.read_text(encoding="utf-8")
         for target in LINK_RE.findall(body):
             if target.startswith(("http://", "https://", "#", "mailto:")):
