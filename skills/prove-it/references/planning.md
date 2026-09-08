@@ -6,12 +6,18 @@ Use the PR diff as the source of truth. Decide what another developer would actu
 
 | Change | Default |
 |---|---|
-| Interactive UI | One short demo; add a final screenshot only if it adds something |
-| Visual or layout change | Before/after screenshots |
-| Frontend plus backend | Demo or screenshot plus one direct backend check |
-| Backend or library only | Concrete response, state change, trace, or command output |
+| Interactive UI | One short real-app demo that shows the start, action, and result |
+| Visual or layout change | Real before/after screenshots at the same viewport |
+| Frontend plus backend | Real-app demo or screenshot plus one direct backend check |
+| Backend or library only | Concrete runtime receipt plus the generated backend behavior diagram |
 | Architecture-heavy change | Optional diagram after the real check |
 | Docs, config, behavior-preserving refactor | No runtime check unless the human asks |
+
+For `browser`, `screenshot`, or `mixed`, add a visual claim before any test claims. The proof is incomplete without that claim. A test can support the visual claim, but it cannot replace the screenshot or video.
+
+Use the changed route in the real app with safe test data. Use a component fixture only when the component has no reachable app route, and say that the fixture proves rendering rather than the full flow. If the real UI cannot run, mark the visual claim `not_proven` with the concrete block.
+
+For backend-only work, run `visualize` after the checks so the comment shows the behavior, code path, and observed result without turning command output into a screenshot.
 
 Do not record a video when there is no meaningful sequence. Do not generate a dashboard that restates statuses.
 

@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import datetime as dt
 import hashlib
+import html
 import io
 import json
 import os
@@ -18,13 +19,14 @@ import struct
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Iterable, Sequence
 
-TOOL_VERSION = "1.5.0"
+TOOL_VERSION = "1.8.0"
 SCHEMA_VERSION = 3
 TEMP_RUN_MAX_AGE_HOURS = 1.0
 
@@ -51,6 +53,8 @@ IMAGE_EVIDENCE_TYPES = {"screenshot", "diagram"}
 VIDEO_EVIDENCE_TYPES = {"video"}
 MEDIA_EVIDENCE_TYPES = IMAGE_EVIDENCE_TYPES | VIDEO_EVIDENCE_TYPES
 ALL_EVIDENCE_TYPES = TEXT_EVIDENCE_TYPES | MEDIA_EVIDENCE_TYPES | {"trace", "har"}
+VISUAL_CLAIM_METHODS = {"browser", "screenshot", "video"}
+VISUAL_PROOF_RECOMMENDATIONS = {"browser", "screenshot", "mixed"}
 
 SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[^\s]+"), r"\1[REDACTED]"),
@@ -1284,6 +1288,120 @@ def cmd_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def visual_text_lines(value: Any, width: int = 34, max_lines: int = 3, break_long_words: bool = False) -> list[str]:
+    clean = " ".join(str(value or "").split())
+    wrapped = textwrap.wrap(
+        clean,
+        width=width,
+        break_long_words=break_long_words,
+        break_on_hyphens=break_long_words,
+    ) or ["—"]
+    selected = wrapped[:max_lines]
+    if len(wrapped) > max_lines:
+        selected[-1] = selected[-1].rstrip(".,;:") + "…"
+    return selected
+
+
+def svg_text_block(x: int, y: int, lines: list[str], fill: str = "#172033") -> str:
+    return "".join(
+        f'<text x="{x}" y="{y + index * 24}" fill="{fill}" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">{html.escape(line)}</text>'
+        for index, line in enumerate(lines)
+    )
+
+
+def backend_visual_rows(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    review_path = [str(step.get("text") or "") for step in manifest.get("review_path", []) if isinstance(step, dict)]
+    fallback_path = " → ".join(value for value in review_path if value)
+    for claim in manifest.get("claims", []):
+        if not isinstance(claim, dict) or claim.get("status") == "skipped":
+            continue
+        code = [normalize_code_ref(str(value)) for value in claim.get("code", []) if str(value).strip()]
+        path = " → ".join(code[:2]) or fallback_path or str(claim.get("method") or "runtime check")
+        rows.append(
+            {
+                "behavior": str(claim.get("text") or claim.get("expected") or "Behavior checked"),
+                "path": path,
+                "result": str(claim.get("observed") or claim.get("expected") or "No result recorded"),
+                "status": str(claim.get("status") or "pending"),
+            }
+        )
+        if len(rows) == 3:
+            break
+    return rows
+
+
+def render_backend_visual(manifest: dict[str, Any], rows: list[dict[str, str]]) -> str:
+    row_height = 154
+    height = 154 + row_height * len(rows)
+    capture_sha = manifest_capture_sha(manifest)[:8] or "unknown"
+    status_colors = {"passed": "#13795b", "failed": "#c23b3b", "not_proven": "#a15c00", "pending": "#6b7280"}
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="{height}" viewBox="0 0 1200 {height}">',
+        f'<rect width="1200" height="{height}" rx="24" fill="#f7f8fb"/>',
+        '<text x="48" y="52" fill="#172033" font-size="28" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Backend behavior</text>',
+        f'<text x="48" y="82" fill="#667085" font-size="15" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">captured at {html.escape(capture_sha)}</text>',
+        '<text x="52" y="126" fill="#667085" font-size="13" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">BEHAVIOR CHECKED</text>',
+        '<text x="424" y="126" fill="#667085" font-size="13" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">CODE PATH</text>',
+        '<text x="794" y="126" fill="#667085" font-size="13" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">OBSERVED RESULT</text>',
+    ]
+    for index, row in enumerate(rows):
+        top = 142 + index * row_height
+        text_y = top + 42
+        color = status_colors.get(row["status"], "#6b7280")
+        parts.extend(
+            [
+                f'<rect x="48" y="{top}" width="304" height="126" rx="14" fill="#ffffff" stroke="#d8deea"/>',
+                f'<rect x="418" y="{top}" width="304" height="126" rx="14" fill="#ffffff" stroke="#d8deea"/>',
+                f'<rect x="788" y="{top}" width="364" height="126" rx="14" fill="#ffffff" stroke="{color}" stroke-width="2"/>',
+                f'<path d="M364 {top + 63} H406" stroke="#98a2b3" stroke-width="2"/><path d="M396 {top + 55} L406 {top + 63} L396 {top + 71}" fill="none" stroke="#98a2b3" stroke-width="2"/>',
+                f'<path d="M734 {top + 63} H776" stroke="#98a2b3" stroke-width="2"/><path d="M766 {top + 55} L776 {top + 63} L766 {top + 71}" fill="none" stroke="#98a2b3" stroke-width="2"/>',
+                svg_text_block(66, text_y, visual_text_lines(row["behavior"], 29)),
+                svg_text_block(436, text_y, visual_text_lines(row["path"], 29, break_long_words=True)),
+                svg_text_block(806, text_y, visual_text_lines(row["result"], 35), color),
+            ]
+        )
+    parts.append("</svg>")
+    return "\n".join(parts) + "\n"
+
+
+def cmd_visualize(args: argparse.Namespace) -> int:
+    run_dir = pathlib.Path(args.dir).resolve()
+    manifest = load_manifest(run_dir)
+    rows = backend_visual_rows(manifest)
+    if not rows:
+        raise RuntimeError("No backend claim results are available to visualize")
+    output = run_dir / "frontend" / "backend-behavior.svg"
+    output.parent.mkdir(exist_ok=True)
+    output.write_text(render_backend_visual(manifest, rows), encoding="utf-8")
+    first_claim = next(claim for claim in manifest.get("claims", []) if isinstance(claim, dict) and claim.get("status") != "skipped")
+    evidence = [
+        item
+        for item in first_claim.get("evidence", [])
+        if not (
+            isinstance(item, dict)
+            and isinstance(item.get("details"), dict)
+            and item["details"].get("generated_by") == "prove-it"
+        )
+    ]
+    evidence.append(
+        make_evidence(
+            run_dir=run_dir,
+            evidence_type="diagram",
+            label="Backend behavior",
+            path=output,
+            status="passed",
+            observed="Backend behavior map generated from the recorded checks.",
+            details={"generated_by": "prove-it"},
+            role="detail",
+        )
+    )
+    first_claim["evidence"] = evidence
+    save_manifest(run_dir, manifest)
+    print(relative_artifact_path(run_dir, output))
+    return 0
+
+
 def scan_for_secrets(path: pathlib.Path) -> list[str]:
     try:
         if path.stat().st_size > 2_000_000:
@@ -1392,6 +1510,17 @@ def validate_manifest(run_dir: pathlib.Path, manifest: dict[str, Any]) -> dict[s
                     warnings.append(f"{cid}: could not determine video duration: {rel}")
             for finding in scan_for_secrets(path):
                 errors.append(f"{cid}: possible {finding} in {rel}")
+
+    recommendation = str(manifest.get("change", {}).get("recommended_proof") or "none")
+    if recommendation in VISUAL_PROOF_RECOMMENDATIONS:
+        visual_claims = [claim for claim in claims if str(claim.get("method") or "") in VISUAL_CLAIM_METHODS]
+        if not visual_claims:
+            errors.append(
+                "UI-facing change has no visual claim. Add a browser, screenshot, or video claim; "
+                "if the real UI cannot be reached, mark that claim not_proven and state why."
+            )
+    if recommendation == "backend" and claims and not evidence_counts.get("diagram"):
+        warnings.append("Backend proof has no behavior diagram. Run `prove-it visualize --dir <proof-dir>`; publish will generate it if omitted.")
 
     budgets = manifest.get("budgets", DEFAULT_BUDGETS)
     if len(claims) > int(budgets.get("max_claims", DEFAULT_BUDGETS["max_claims"])):
@@ -1981,6 +2110,17 @@ def replace_relationship_block(body: str, manifest: dict[str, Any]) -> str:
 def cmd_publish(args: argparse.Namespace) -> int:
     run_dir = pathlib.Path(args.dir).resolve()
     manifest = load_manifest(run_dir)
+    recommendation = str(manifest.get("change", {}).get("recommended_proof") or "none")
+    has_visual = any(
+        isinstance(item, dict) and str(item.get("type") or "") in MEDIA_EVIDENCE_TYPES
+        for claim in manifest.get("claims", [])
+        if isinstance(claim, dict)
+        for item in claim.get("evidence", [])
+    )
+    if recommendation == "backend" and manifest.get("claims") and not has_visual:
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_visualize(argparse.Namespace(dir=str(run_dir)))
+        manifest = load_manifest(run_dir)
     repo = pathlib.Path(manifest["run"]["repo_root"]).resolve()
     current_pr, relationship = resolve_publish_target(run_dir, manifest, args.pr)
     manifest["relationship"] = relationship
@@ -2236,6 +2376,10 @@ def build_parser() -> argparse.ArgumentParser:
     note.add_argument("--dir", required=True)
     note.add_argument("--text", required=True)
     note.set_defaults(func=cmd_note)
+
+    visualize = sub.add_parser("visualize", help="Generate an evidence-backed backend behavior diagram.")
+    visualize.add_argument("--dir", required=True)
+    visualize.set_defaults(func=cmd_visualize)
 
     validate = sub.add_parser("validate", help="Check integrity, budgets, secrets, and claim status.")
     validate.add_argument("--dir", required=True)
