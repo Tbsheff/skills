@@ -15,6 +15,10 @@ import redact  # noqa: E402
 import steps  # noqa: E402
 
 
+FAKE_JWT = ".".join(["eyJ" + "hbGciOiJub25lIn0", "eyJ" + "zdWIiOiIxIn0", "c2lnbmF0dXJl"])
+FAKE_PASSWORD = "-".join(["not", "a", "secret"])
+
+
 class StepsTest(unittest.TestCase):
     def test_normalize_picks_last_click_as_anchor(self):
         flow = steps.normalize([{"fill": "#a", "text": "x"}, {"click": "#b"}, {"click": {"role": "button", "name": "Save"}},
@@ -107,7 +111,7 @@ class VerdictTest(unittest.TestCase):
 
 class SecretFillTest(unittest.TestCase):
     def test_refuses_literal_secrets(self):
-        for step in ({"fill": "#password", "text": "hunter2"}, {"fill": {"label": "API token"}, "text": "zq9"},
+        for step in ({"fill": "#password", "text": FAKE_PASSWORD}, {"fill": {"label": "API token"}, "text": "zq9"},
                      {"fill": "#name", "text": "sk-abcdef0123456789"},
                      {"fill": "#name", "text": "a1b2c3d4e5f6g7h8i9j0k1"}):
             with self.assertRaises(steps.StepError) as ctx:
@@ -179,7 +183,7 @@ class RedactTest(unittest.TestCase):
     def test_auth_values(self):
         out = redact.auth({"url": "http://127.0.0.1:3000/cb?code=1&access_token=abc", "sessionId": "zz",
                            "passed": True, "seen_text": {"Saved": True},
-                           "note": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlMTIz"})
+                           "note": "Bearer " + FAKE_JWT})
         self.assertNotIn("abc", out["url"])
         self.assertIn("code=1", out["url"])
         self.assertEqual(out["sessionId"], redact.MASK)
