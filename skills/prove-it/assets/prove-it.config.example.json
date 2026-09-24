@@ -15,7 +15,6 @@
   },
   "browser": {
     "viewport": [1440, 900],
-    "record_fps": 12,
     "restore": true,
     "restore_check_text": "Dashboard"
   },
