@@ -1,6 +1,6 @@
 # Plan the check
 
-Use the PR diff as the source of truth. Decide what another developer would actually want to see.
+Use the current diff as the source of truth. In PR mode, use the PR diff. In local mode, include committed branch changes and the working tree. Decide what another developer would actually want to see.
 
 ## Pick the artifact
 
@@ -12,6 +12,8 @@ Use the PR diff as the source of truth. Decide what another developer would actu
 | Backend or library only | Concrete runtime receipt plus the generated backend behavior diagram |
 | Architecture-heavy change | Optional diagram after the real check |
 | Docs, config, behavior-preserving refactor | No runtime check unless the human asks |
+
+If the scan gives a path the wrong kind, add a `classify` rule to the project config ([configuration.md](configuration.md)) and run `init` again. Do not edit `manifest.json` by hand.
 
 For `browser`, `screenshot`, or `mixed`, add a visual claim before any test claims. The proof is incomplete without that claim. A test can support the visual claim, but it cannot replace the screenshot or video.
 
