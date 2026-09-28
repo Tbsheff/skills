@@ -1,0 +1,38 @@
+:root {
+  --ink: #0f172a; --muted: #64748b; --faint: #94a3b8; --line: #e2e8f0; --panel: #f8fafc;
+  --add-bg: #dcfce7; --add-ink: #166534;
+  --del-bg: #fee2e2; --del-ink: #991b1b;
+  --chg-bg: #fef3c7; --chg-ink: #92400e;
+  --base: #475569; --change: #4338ca;
+  --base-fill: #94a3b8; --change-fill: #6366f1;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #fff; }
+body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+.house-card { width: var(--card-width, 800px); padding: 22px 24px 16px; background: #fff; }
+.house-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.house-head h1 { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+.house-sub { color: var(--muted); font-size: 12.5px; line-height: 1.45; margin: 0 0 14px; }
+.house-sub code, .house-note code { font-family: var(--mono); font-size: 11.5px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 5px; font: 600 11px/1 var(--sans); letter-spacing: 0.02em;
+  padding: 4px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; background: #fff; }
+.pill .sha { font-family: var(--mono); font-weight: 500; text-transform: none; }
+.pill.base { color: var(--base); } .pill.change { color: var(--change); }
+.pill.add { color: var(--add-ink); background: var(--add-bg); border-color: transparent; }
+.pill.del { color: var(--del-ink); background: var(--del-bg); border-color: transparent; }
+.pill.chg { color: var(--chg-ink); background: var(--chg-bg); border-color: transparent; }
+.pill.neutral { color: var(--muted); }
+.pills { display: flex; gap: 6px; flex-wrap: nowrap; }
+.pills.wrap { flex-wrap: wrap; }
+.panel { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #fff; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--muted); }
+.side { font: 600 11px/1 var(--sans); letter-spacing: 0.04em; text-transform: uppercase; }
+.side .sha { font-family: var(--mono); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.side.base { color: var(--base); } .side.change { color: var(--change); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.house-note { font-size: 11.5px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.house-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--faint); }
+.house-foot code { font-family: var(--mono); }
+.house-foot .stamp { font-family: var(--mono); color: var(--muted); white-space: nowrap; }

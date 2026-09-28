@@ -13,11 +13,19 @@ LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--self-test", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="Validate the prove-it skill.",
+        usage="validate_skill.py [SKILL_DIR] [--self-test]",
+    )
+    parser.add_argument("skill_dir", nargs="?", help="Skill directory. Default: the directory that holds this script.")
+    parser.add_argument("--self-test", action="store_true", help="Also run scripts/self_test.py.")
     args = parser.parse_args()
 
-    root = pathlib.Path(__file__).resolve().parent.parent
+    root = pathlib.Path(args.skill_dir).expanduser().resolve() if args.skill_dir else pathlib.Path(__file__).resolve().parent.parent
+    if root.is_file():
+        root = root.parent
+    if not (root / "SKILL.md").is_file():
+        parser.error(f"no SKILL.md in {root}; pass the skill directory, for example: validate_skill.py ~/.agents/skills/prove-it")
     errors: list[str] = []
     skill = root / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
@@ -40,10 +48,14 @@ def main() -> int:
         errors.append(f"invalid skill name: {name!r}")
     if not description or len(description) > 1024:
         errors.append(f"description length must be 1..1024, got {len(description)}")
-    if fields.get("disable-model-invocation") != "true":
-        errors.append("prove-it must set disable-model-invocation: true")
+    if fields.get("disable-model-invocation") == "true":
+        errors.append("prove-it must allow model invocation")
     if fields.get("context") != "fork":
         errors.append("prove-it must run with context: fork")
+
+    openai_config = (root / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    if "allow_implicit_invocation: true" not in openai_config:
+        errors.append("agents/openai.yaml must allow implicit invocation")
 
     skill_lines = len(text.splitlines())
     skill_words = len(text.split())
@@ -93,13 +105,18 @@ def main() -> int:
         elif not (script.stat().st_mode & 0o111):
             errors.append(f"script is not executable: scripts/{script_name}")
 
-    compile_result = subprocess.run(
-        [sys.executable, "-S", "-m", "py_compile", str(root / "scripts" / "prove.py")],
-        text=True,
-        capture_output=True,
-    )
-    if compile_result.returncode:
-        errors.append(f"prove.py does not compile: {compile_result.stderr.strip()}")
+    for tool in ("shared/house.py", "shared/house.css", "ui/build.py", "ui/cursor.js", "backend/capture.py", "backend/render.py"):
+        if not (root / "scripts" / "media" / tool).exists():
+            errors.append(f"missing media tool: scripts/media/{tool}")
+
+    for script in [root / "scripts" / "prove.py", *sorted((root / "scripts" / "media").rglob("*.py"))]:
+        compile_result = subprocess.run(
+            [sys.executable, "-S", "-c", "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')", str(script)],
+            text=True,
+            capture_output=True,
+        )
+        if compile_result.returncode:
+            errors.append(f"{script.relative_to(root)} does not compile: {compile_result.stderr.strip()}")
 
     if not errors and args.self_test:
         test = subprocess.run([sys.executable, str(root / "scripts" / "self_test.py")], text=True, capture_output=True)
