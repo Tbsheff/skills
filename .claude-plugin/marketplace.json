@@ -1,0 +1,17 @@
+{
+  "name": "tbsheff",
+  "owner": {
+    "name": "Tyler Sheffield",
+    "url": "https://github.com/Tbsheff"
+  },
+  "metadata": {
+    "description": "Agent skills by Tyler Sheffield."
+  },
+  "plugins": [
+    {
+      "name": "tbsheff-skills",
+      "source": "./",
+      "description": "Agent skills by Tyler Sheffield: planning, review, writing, and proof of work."
+    }
+  ]
+}
