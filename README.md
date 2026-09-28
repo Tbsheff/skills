@@ -13,7 +13,24 @@ Agent skills created and maintained by Tyler Sheffield.
 - `typed-call-stack-planning` — Plan multi-file work with typed call stacks.
 - `writing-architecture-plans` — Write implementation-ready architecture plans and ADRs.
 
-## Install
+## Install as a Claude Code plugin
+
+Add this repo as a plugin marketplace, then install the plugin:
+
+```sh
+claude plugin marketplace add Tbsheff/skills
+claude plugin install tbsheff-skills@tbsheff
+```
+
+In Claude Code, skills show with the `tbsheff-skills:` prefix, for example `/tbsheff-skills:prove-it`.
+
+To test local changes without installing:
+
+```sh
+claude --plugin-dir /path/to/skills
+```
+
+## Install with `npx skills`
 
 List the available skills without installing them:
 

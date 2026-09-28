@@ -1,0 +1,12 @@
+{
+  "name": "tbsheff-skills",
+  "description": "Agent skills by Tyler Sheffield: planning, review, writing, and proof of work.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Tyler Sheffield",
+    "url": "https://github.com/Tbsheff"
+  },
+  "homepage": "https://github.com/Tbsheff/skills",
+  "repository": "https://github.com/Tbsheff/skills",
+  "keywords": ["skills", "planning", "code-review", "writing"]
+}
