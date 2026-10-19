@@ -6,7 +6,10 @@ Agent skills created and maintained by Tyler Sheffield.
 
 - `abstraction-design-coach` — Design and simplify software abstractions.
 - `agent-artifacts` — Build checked engineering artifacts from structured data.
+- `ask` — Use the agent's question tool to get user input.
+- `big-picture` — Use brief text, large visuals, and clear design without AI slop.
 - `prove-it` — Add visible proof to an existing pull request.
+- `restate-intent` — State the user's goal and problem before continuing.
 - `thariq-writing` — Write direct, practical technical posts.
 - `the-hemingway-rule` — Keep plans, audits, and explanations concise.
 - `thermo-nuclear-code-quality-review` — Run a strict maintainability review.
