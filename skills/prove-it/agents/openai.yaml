@@ -1,6 +1,6 @@
 interface:
   display_name: "Prove It"
-  short_description: "Attach focused runtime proof to a pull request."
-  default_prompt: "Use $prove-it to verify this pull request and attach focused runtime proof."
+  short_description: "Create focused runtime proof for changed code."
+  default_prompt: "Use $prove-it to verify the changed behavior. Create local proof for uncommitted or pre-PR work, or publish it when the work is already on a pull request."
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
